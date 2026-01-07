@@ -618,6 +618,7 @@ function renderRawSheet(sheetName, fromExercise=false){
       }catch(e){}
     }
   } 
+
    
    container.appendChild(top);   
    
