@@ -390,10 +390,59 @@ function renderRawSheet(sheetName, fromExercise=false){
   const top = document.createElement("div");
   top.className="card";
   top.innerHTML = `
-    <h3>${fromExercise ? "Quick guide" : "Tabella completa"}</h3>
+    <h3>${fromExercise ? "Quick guide" : "Tabella completa"}</h3>${fromExercise ? `<div style="margin-top:12px" id="photoBlock"></div>` : ``}
     <div class="hint">${fromExercise ? "Link blu = immagini. Link interni = navigazione dentro l’app." : "Questa è la tabella originale del foglio. Utile se vuoi vedere formule / colonne."}</div>
   `;
-  container.appendChild(top);
+  if(fromExercise){
+    const block = top.querySelector("#photoBlock");
+    block.innerHTML = `
+      <div class="hint">Foto: per motivi tecnici e di diritti/CORS non posso “prendere le prime 3 da Google Images” automaticamente. Però le riempio in automatico con 3 risultati da Wikimedia (gratis e compatibile). Se non ti piacciono, puoi aprire Google Images e incollare 3 URL manualmente.</div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px">
+        <div class="card" style="padding:8px"><img id="ph1" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnG">🔎 Google</button><button class="btn" id="btnU1">📌 URL 1</button></div></div>
+        <div class="card" style="padding:8px"><img id="ph2" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnU2">📌 URL 2</button></div></div>
+        <div class="card" style="padding:8px"><img id="ph3" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnU3">📌 URL 3</button></div></div>
+      </div>
+    `;
+    const q = encodeURIComponent(sheetName);
+    top.querySelector("#btnG").onclick = ()=>window.open(`https://www.google.com/search?tbm=isch&q=${q}`, "_blank");
+    const keyBase = `img_${sheetName}_`;
+    function setImg(n, url){
+      const img = top.querySelector(`#ph${n}`);
+      img.src = url || "";
+      img.alt = sheetName + " photo " + n;
+      if(url) localStorage.setItem(keyBase+n, url);
+    }
+    function promptUrl(n){
+      const cur = localStorage.getItem(keyBase+n) || "";
+      const url = prompt(`Incolla URL immagine ${n}`, cur);
+      if(url!=null && url.trim()) setImg(n, url.trim());
+    }
+    top.querySelector("#btnU1").onclick = ()=>promptUrl(1);
+    top.querySelector("#btnU2").onclick = ()=>promptUrl(2);
+    top.querySelector("#btnU3").onclick = ()=>promptUrl(3);
+
+    // restore if already set
+    for(const n of [1,2,3]){
+      const saved = localStorage.getItem(keyBase+n);
+      if(saved) setImg(n, saved);
+    }
+
+    // auto-fill from Wikimedia if empty
+    const missing = [1,2,3].filter(n=>!localStorage.getItem(keyBase+n));
+    if(missing.length){
+      try{
+        const api = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(sheetName)}&gsrlimit=6&prop=pageimages&pithumbsize=400&format=json&origin=*`;
+        fetch(api).then(r=>r.json()).then(j=>{
+          const pages = j?.query?.pages ? Object.values(j.query.pages) : [];
+          const thumbs = pages.map(p=>p.thumbnail?.source).filter(Boolean);
+          for(let i=0;i<3;i++){
+            const url = thumbs[i];
+            if(url && missing.includes(i+1)) setImg(i+1, url);
+          }
+        });
+      }catch(e){}
+    }
+  }\n\n  container.appendChild(top);
 
   const wrap = document.createElement("div");
   wrap.style.overflow="auto";
@@ -472,7 +521,7 @@ function colLetter(n){
 
 /* ========= Local log (IndexedDB) ========= */
 const DB_NAME="workout_offline_db";
-const DB_VER=1;
+const DB_VER=2;
 let db=null;
 
 function openDb(){
@@ -484,6 +533,11 @@ function openDb(){
         const store = d.createObjectStore("logs", { keyPath:"id" });
         store.createIndex("byDate","date");
         store.createIndex("byExercise","exercise");
+      }
+      if(!d.objectStoreNames.contains("backups")){
+        const b = d.createObjectStore("backups", { keyPath:"id" });
+        b.createIndex("byDate","date");
+        b.createIndex("byTs","ts");
       }
     };
     req.onsuccess = ()=>{ db=req.result; resolve(db); };
@@ -516,6 +570,56 @@ function clearAll(){
     req.onsuccess=()=>resolve();
     req.onerror=()=>reject(req.error);
   });
+
+async function addBackup(snapshot){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(["backups"],"readwrite");
+    tx.objectStore("backups").put(snapshot);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+async function getAllBackups(){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(["backups"],"readonly");
+    const req = tx.objectStore("backups").getAll();
+    req.onsuccess=()=>resolve(req.result||[]);
+    req.onerror=()=>reject(req.error);
+  });
+}
+
+async function dailyAutoBackup(){
+  // iOS Safari blocks automatic file downloads, so we save a daily snapshot INSIDE the app (IndexedDB).
+  const today = new Date();
+  const key = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const last = localStorage.getItem("lastAutoBackupDate");
+  if(last === key) return;
+
+  const logs = await getAllLogs();
+  const snap = {
+    id: crypto.randomUUID(),
+    date: key,
+    ts: Date.now(),
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    logs
+  };
+  await addBackup(snap);
+
+  // keep last 30
+  const all = (await getAllBackups()).sort((a,b)=>b.ts-a.ts);
+  for(let i=30;i<all.length;i++){
+    await new Promise((resolve,reject)=>{
+      const tx = db.transaction(["backups"],"readwrite");
+      tx.objectStore("backups").delete(all[i].id);
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error);
+    });
+  }
+
+  localStorage.setItem("lastAutoBackupDate", key);
+}
 }
 
 async function renderLogView(){
@@ -576,6 +680,51 @@ async function renderLogView(){
   container.appendChild(listCard);
 
   await renderLogList();
+
+  // Backups (auto)
+  const backupsCard = document.createElement("div");
+  backupsCard.className="card";
+  backupsCard.innerHTML = `<h3>Backup automatici (giornalieri)</h3>
+    <div class="hint">L’app salva automaticamente uno snapshot al giorno (solo sul telefono). Da qui puoi esportare un backup in file quando vuoi.</div>
+    <div class="logList" id="bkList"></div>`;
+  container.appendChild(backupsCard);
+
+  const bks = (await getAllBackups()).sort((a,b)=>b.ts-a.ts);
+  const bkEl = backupsCard.querySelector("#bkList");
+  if(!bks.length){
+    const div=document.createElement("div");
+    div.className="hint";
+    div.textContent="Nessun backup automatico ancora (si crea al primo avvio del giorno).";
+    bkEl.appendChild(div);
+  } else {
+    for(const b of bks.slice(0,10)){
+      const div=document.createElement("div");
+      div.className="logItem";
+      div.innerHTML = `<div class="meta"><span><b>${escapeHtml(b.date)}</b></span><span>• ${new Date(b.ts).toLocaleString()}</span></div>
+        <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" data-expbk="${escapeHtml(b.id)}">⬇️ Esporta questo backup</button>
+        </div>`;
+      bkEl.appendChild(div);
+    }
+    backupsCard.querySelectorAll("button[data-expbk]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = btn.getAttribute("data-expbk");
+        const all = await getAllBackups();
+        const b = all.find(x=>x.id===id);
+        if(!b) return alert("Backup non trovato.");
+        const blob = new Blob([JSON.stringify({version:1, exportedAt:new Date().toISOString(), logs:b.logs}, null, 2)], {type:"application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href=url;
+        a.download=`gymapp_backup_${b.date}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+    });
+  }
+
 }
 
 async function renderLogList(){
@@ -605,6 +754,35 @@ async function renderLogList(){
 }
 
 /* ========= Backup/export ========= */
+async function importBackupFromFile(file){
+  const text = await file.text();
+  let payload = null;
+  try{ payload = JSON.parse(text); }catch(e){ throw new Error("Il file non è un JSON valido."); }
+  if(!payload || !Array.isArray(payload.logs)) throw new Error("Backup non valido: manca logs[].");
+  return payload;
+}
+
+async function importBackup(payload, mode="merge"){
+  const incoming = payload.logs || [];
+  if(mode==="replace"){
+    await clearAll();
+  }
+  // Merge by id; if no id, create
+  const existing = await getAllLogs();
+  const map = new Map(existing.map(x=>[x.id,x]));
+  let added=0, skipped=0;
+  for(const item of incoming){
+    const id = item.id || crypto.randomUUID();
+    if(map.has(id)){
+      skipped++;
+      continue;
+    }
+    await addLog({...item, id});
+    added++;
+  }
+  return {added, skipped, total: incoming.length};
+}
+
 async function exportBackup(){
   const logs = await getAllLogs();
   const payload = {
@@ -645,6 +823,7 @@ async function init(){
 
   buildPlanIndex();
   await openDb();
+  await dailyAutoBackup();
   await registerSw();
 
   // UI bindings
@@ -657,6 +836,22 @@ async function init(){
   const nl=document.getElementById("nav-log"); if(nl) nl.onclick=()=>setActiveTab("log");
 
   $("btnToggleView").style.display="none"; // v4: plan is folder view; hide old toggle
+  $("btnImport").onclick = ()=>document.getElementById("fileImport").click();
+  document.getElementById("fileImport").onchange = async (ev)=>{
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    try{
+      const payload = await importBackupFromFile(file);
+      const mode = confirm("OK = UNISCI (merge)\nAnnulla = SOVRASCRIVI (replace)") ? "merge" : "replace";
+      const res = await importBackup(payload, mode);
+      alert(`Import completato. Aggiunti: ${res.added} • Saltati: ${res.skipped}`);
+      if(currentTab==="log") await renderLogView();
+    }catch(e){
+      alert(e.message || String(e));
+    } finally {
+      ev.target.value="";
+    }
+  };
   $("btnExport").onclick = ()=>exportBackup();
   $("btnReset").onclick = ()=>resetAll();
 
