@@ -5,6 +5,7 @@
    - Log tab: local IndexedDB diary
 */
 const PLAN_SHEETS = ["Overview","January","February","March-Apr"];
+const MONTH_ORDER = ["January","February","March-Apr"];
 
 let DATA = null;
 let currentTab = "plan"; // plan | ex | log
@@ -13,7 +14,37 @@ let currentPlan = { month: "January", weekIdx: 0, dayIdx: 0 };
 
 const $ = (id)=>document.getElementById(id);
 
+function isMobile(){
+  return window.innerWidth <= 860;
+}
+function enterMobileDetail(){
+  if(!isMobile()) return;
+  document.body.classList.add("mobileDetail");
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+function exitMobileDetail(){
+  document.body.classList.remove("mobileDetail");
+}
+
+
 function normalize(s){ return (s||"").toLowerCase().trim(); }
+function showModal(message, title="Avviso"){
+  const ov = document.getElementById("modalOverlay");
+  const t = document.getElementById("modalTitle");
+  const b = document.getElementById("modalBody");
+  const close = ()=>{ ov.style.display="none"; };
+  t.textContent = title;
+  b.textContent = message;
+  ov.style.display="flex";
+  document.getElementById("modalClose").onclick = close;
+  document.getElementById("modalOk").onclick = close;
+}
+
+function cssEscape(s){
+  try{ if(window.CSS && typeof CSS.escape==="function") return CSS.escape(s); }catch(e){}
+  return String(s).replace(/\\/g,"\\\\").replace(/"/g,'\\"');
+}
+
 function escapeHtml(str){
   return (str||"").toString().replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 }
@@ -117,6 +148,7 @@ function setActiveTab(tab){
   ["tab-plan","tab-ex","tab-log"].forEach(t=>$(t).classList.remove("active"));
   $(`tab-${tab}`).classList.add("active");
   $("q").value = "";
+  exitMobileDetail();
   renderList();
   syncNav();
   if(tab==="log") renderLogView();
@@ -237,7 +269,7 @@ function getCurrentDayObj(){
   return {month: currentPlan.month, weekTitle: w.title, day: d, weekIdx: currentPlan.weekIdx, dayIdx: currentPlan.dayIdx};
 }
 
-function renderCurrentDay(){
+async function renderCurrentDay(){
   const obj = getCurrentDayObj();
   const container = $("content");
   container.innerHTML = "";
@@ -251,6 +283,7 @@ function renderCurrentDay(){
 
   $("title").textContent = obj.day.title;
   $("subtitle").textContent = `${obj.month} • ${obj.weekTitle}`;
+  enterMobileDetail();
 
   // header controls
   const header = document.createElement("div");
@@ -261,14 +294,18 @@ function renderCurrentDay(){
     <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn" id="btnPrevDay">⬅️ Giorno</button>
       <button class="btn" id="btnNextDay">Giorno ➡️</button>
-      <button class="btn" id="btnOpenMonthTable">🗂️ Apri tabella mese</button>
+      <button class="btn" id="btnPrevWeek">⬅️ Settimana</button>
+      <button class="btn" id="btnNextWeek">Settimana ➡️</button>
+      <button class="btn" id="btnOpenMonthTable">🗂️ Tabella mese</button>
     </div>
   `;
   container.appendChild(header);
 
   header.querySelector("#btnPrevDay").onclick = ()=>stepDay(-1);
   header.querySelector("#btnNextDay").onclick = ()=>stepDay(1);
-  header.querySelector("#btnOpenMonthTable").onclick = ()=>renderRawSheet(obj.month);
+  header.querySelector("#btnPrevWeek").onclick = ()=>stepWeek(-1);
+  header.querySelector("#btnNextWeek").onclick = ()=>stepWeek(1);
+  header.querySelector("#btnOpenMonthTable").onclick = ()=>{ renderRawSheet(obj.month); enterMobileDetail(); };
 
   // exercises
   const list = document.createElement("div");
@@ -287,6 +324,14 @@ function renderCurrentDay(){
         ${target ? `<span class="pill" style="cursor:default" data-ico="🎯">${escapeHtml(target)}</span>` : ""}
       </div>
       ${ex.notes ? `<div class="hint" style="margin-top:10px">${escapeHtml(ex.notes)}</div>` : ``}
+      <div class="field">
+        <label>Kg usati oggi</label>
+        <input inputmode="decimal" placeholder="es. 80" data-kg="${escapeHtml(ex.name)}" />
+      </div>
+      <div class="field">
+        <label>Note (esecuzione / RIR / sensazioni)</label>
+        <textarea placeholder="Scrivi qui…" data-note="${escapeHtml(ex.name)}"></textarea>
+      </div>
       <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
         ${hasSheet ? `<button class="btn primary" data-open="${escapeHtml(ex.name)}">📄 Dettagli</button>` : `<span class="hint">Nessuna scheda trovata</span>`}
         <button class="btn" data-addlog="${escapeHtml(ex.name)}">📝 Log</button>
@@ -296,6 +341,62 @@ function renderCurrentDay(){
   });
 
   container.appendChild(list);
+
+
+  try{
+  // load + autosave per-exercise fields (kg + note) for this day workout
+  const dayKey = `${obj.month}||${obj.weekTitle}||${obj.day.title}`;
+  const loadOne = async (exName)=>{
+    const id = `${dayKey}||${exName}`;
+    const entry = await getDayEntry(id);
+    const kgEl = container.querySelector(`input[data-kg="${cssEscape(exName)}"]`);
+    const noteEl = container.querySelector(`textarea[data-note="${cssEscape(exName)}"]`);
+    if(entry){
+      if(kgEl) kgEl.value = entry.kg || "";
+      if(noteEl) noteEl.value = entry.note || "";
+    }
+  };
+  const saveOne = async (exName)=>{
+    const id = `${dayKey}||${exName}`;
+    const kgEl = container.querySelector(`input[data-kg="${cssEscape(exName)}"]`);
+    const noteEl = container.querySelector(`textarea[data-note="${cssEscape(exName)}"]`);
+    const payload = {
+      id,
+      dayKey,
+      month: obj.month,
+      weekTitle: obj.weekTitle,
+      dayTitle: obj.day.title,
+      exercise: exName,
+      kg: kgEl ? kgEl.value.trim() : "",
+      note: noteEl ? noteEl.value.trim() : "",
+      ts: Date.now()
+    };
+    await upsertDayEntry(payload);
+  };
+
+  const exNames = obj.day.exercises.map(e=>e.name);
+  await Promise.all(exNames.map(loadOne));
+
+  // debounce saves
+  const timers = new Map();
+  const debouncedSave = (exName)=>{
+    if(timers.has(exName)) clearTimeout(timers.get(exName));
+    timers.set(exName, setTimeout(()=>saveOne(exName), 450));
+  };
+
+  container.querySelectorAll("input[data-kg]").forEach(inp=>{
+    const exName = inp.getAttribute("data-kg");
+    inp.addEventListener("input", ()=>debouncedSave(exName));
+    inp.addEventListener("blur", ()=>saveOne(exName));
+  });
+  container.querySelectorAll("textarea[data-note]").forEach(tx=>{
+    const exName = tx.getAttribute("data-note");
+    tx.addEventListener("input", ()=>debouncedSave(exName));
+    tx.addEventListener("blur", ()=>saveOne(exName));
+  });
+
+
+  }catch(e){ console.warn("day fields load/save failed", e); }
 
   // wire buttons
   container.querySelectorAll("button[data-open]").forEach(b=>{
@@ -312,6 +413,79 @@ function renderCurrentDay(){
       }, 50);
     };
   });
+}
+
+function findAdjacentWeek(delta){
+  // delta: -1 previous, +1 next
+  const cur = getCurrentDayObj();
+  if(!cur) return null;
+  const curDayTitle = cur.day.title;
+  const curDayIdx = cur.dayIdx;
+
+  const monthIdx = MONTH_ORDER.indexOf(cur.month);
+  const monthObj = PLAN_INDEX[cur.month];
+
+  function pickDay(weekObj){
+    if(!weekObj) return null;
+    // Try by title first
+    const diByTitle = weekObj.days.findIndex(d=>d.title===curDayTitle);
+    if(diByTitle>=0) return {dayIdx: diByTitle};
+    // fallback by index
+    if(curDayIdx < weekObj.days.length) return {dayIdx: curDayIdx};
+    return null;
+  }
+
+  // within same month
+  let mIdx = monthIdx;
+  let wIdx = cur.weekIdx + delta;
+
+  while(true){
+    const mName = MONTH_ORDER[mIdx];
+    if(!mName) return null;
+    const m = PLAN_INDEX[mName];
+    if(!m || !m.weeks.length) return null;
+
+    // clamp / wrap across months
+    if(wIdx < 0){
+      mIdx -= 1;
+      if(mIdx < 0) return null;
+      const prevM = PLAN_INDEX[MONTH_ORDER[mIdx]];
+      if(!prevM || !prevM.weeks.length) return null;
+      wIdx = prevM.weeks.length - 1;
+      continue;
+    }
+    if(wIdx >= m.weeks.length){
+      mIdx += 1;
+      if(mIdx >= MONTH_ORDER.length) return null;
+      wIdx = 0;
+      continue;
+    }
+
+    const w = m.weeks[wIdx];
+    const pick = pickDay(w);
+    if(pick){
+      return { month: mName, weekIdx: wIdx, dayIdx: pick.dayIdx };
+    } else {
+      // corresponding day not found in that week; skip further in same direction
+      wIdx += delta;
+      continue;
+    }
+  }
+}
+
+function stepWeek(delta){
+  const next = findAdjacentWeek(delta);
+  if(!next){
+    showModal(delta>0 
+      ? "Non c'è una settimana di allenamento successiva." 
+      : "Non c'è una settimana di allenamento precedente.", "Settimana non trovata");
+    return;
+  }
+  currentPlan.month = next.month;
+  currentPlan.weekIdx = next.weekIdx;
+  currentPlan.dayIdx = next.dayIdx;
+  renderList();
+  renderCurrentDay();
 }
 
 function stepDay(delta){
@@ -376,6 +550,7 @@ function renderExerciseDetail(name){
   renderList();
   $("title").textContent = name;
   $("subtitle").textContent = "Scheda esercizio";
+  enterMobileDetail();
 
   renderRawSheet(name, true);
 }
@@ -521,7 +696,7 @@ function colLetter(n){
 
 /* ========= Local log (IndexedDB) ========= */
 const DB_NAME="workout_offline_db";
-const DB_VER=2;
+const DB_VER=3;
 let db=null;
 
 function openDb(){
@@ -533,6 +708,11 @@ function openDb(){
         const store = d.createObjectStore("logs", { keyPath:"id" });
         store.createIndex("byDate","date");
         store.createIndex("byExercise","exercise");
+      }
+      if(!d.objectStoreNames.contains("dayEntries")){
+        const e = d.createObjectStore("dayEntries", { keyPath:"id" });
+        e.createIndex("byDay","dayKey");
+        e.createIndex("byExercise","exercise");
       }
       if(!d.objectStoreNames.contains("backups")){
         const b = d.createObjectStore("backups", { keyPath:"id" });
@@ -585,6 +765,25 @@ async function getAllBackups(){
     const tx = db.transaction(["backups"],"readonly");
     const req = tx.objectStore("backups").getAll();
     req.onsuccess=()=>resolve(req.result||[]);
+    req.onerror=()=>reject(req.error);
+  });
+}
+
+
+async function upsertDayEntry(entry){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(["dayEntries"],"readwrite");
+    tx.objectStore("dayEntries").put(entry);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+
+async function getDayEntry(id){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(["dayEntries"],"readonly");
+    const req = tx.objectStore("dayEntries").get(id);
+    req.onsuccess=()=>resolve(req.result||null);
     req.onerror=()=>reject(req.error);
   });
 }
@@ -854,6 +1053,8 @@ async function init(){
   };
   $("btnExport").onclick = ()=>exportBackup();
   $("btnReset").onclick = ()=>resetAll();
+  $("btnBack").onclick = ()=>{ exitMobileDetail(); window.scrollTo({top:0, behavior:"smooth"}); };
+  window.addEventListener("resize", ()=>{ if(!isMobile()) exitMobileDetail(); });
 
   // start
   setActiveTab("plan");

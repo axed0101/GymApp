@@ -78,6 +78,27 @@
       .content{padding-bottom:92px}
     }
 
+  
+    /* Mobile detail mode: show content full-screen, hide sidebar list */
+    body.mobileDetail .sidebar{display:none !important;}
+    body.mobileDetail .app{grid-template-columns:1fr !important;}
+    body.mobileDetail #btnBack{display:inline-flex !important;}
+    @media (max-width: 860px){
+      body.mobileDetail .toolbar{position:sticky;top:0;z-index:20}
+    }
+
+  
+    .modalOverlay{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter: blur(6px);padding:18px}
+    .modalCard{width:min(520px,100%);background:linear-gradient(180deg,rgba(16,22,34,.96),rgba(10,14,22,.96));border:1px solid rgba(27,37,51,.95);border-radius:18px;box-shadow:0 30px 70px rgba(0,0,0,.5);padding:14px 14px 12px;position:relative}
+    .modalClose{position:absolute;right:10px;top:10px;border:none;background:transparent;color:var(--muted);font-size:18px;cursor:pointer}
+    .modalClose:hover{color:var(--text)}
+    .modalTitle{font-weight:800;margin-bottom:8px}
+    .modalBody{color:var(--text);opacity:.92;line-height:1.35;white-space:pre-wrap}
+    .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+    .field label{font-size:12px;color:var(--muted)}
+    .field input,.field textarea{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text)}
+    .field textarea{min-height:86px}
+
   </style>
 </head>
 <body>
@@ -108,6 +129,7 @@
 
   <main class="main">
     <div class="toolbar">
+      <button class="btn" id="btnBack" style="display:none">⬅️ Lista</button>
       <div class="title" id="title">Caricamento…</div>
       <div class="muted" id="subtitle"></div>
       <div style="flex:1"></div>
@@ -129,6 +151,18 @@
   <button class="navBtn active" id="nav-plan" aria-label="Piano"><span class="ico">📅</span><span>Piano</span></button>
   <button class="navBtn" id="nav-ex" aria-label="Esercizi"><span class="ico">💪</span><span>Esercizi</span></button>
   <button class="navBtn" id="nav-log" aria-label="Log"><span class="ico">📝</span><span>Log</span></button>
+</div>
+
+
+<div id="modalOverlay" class="modalOverlay" style="display:none">
+  <div class="modalCard">
+    <button class="modalClose" id="modalClose" aria-label="Chiudi">✕</button>
+    <div class="modalTitle" id="modalTitle">Avviso</div>
+    <div class="modalBody" id="modalBody"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn primary" id="modalOk">OK</button>
+    </div>
+  </div>
 </div>
 
 </body>
