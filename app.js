@@ -17,8 +17,22 @@ function setActiveTab(tab){
   $(`tab-${tab}`).classList.add("active");
   $("q").value = "";
   renderList();
+  syncNav();
   if(tab==="log") renderLogView();
   else renderSheet( (tab==="plan") ? "Overview" : firstExerciseSheet() );
+}
+
+
+function syncNav(){
+  const ids = ["nav-plan","nav-ex","nav-log"];
+  for(const id of ids){
+    const el = document.getElementById(id);
+    if(!el) continue;
+    el.classList.remove("active");
+  }
+  const activeId = currentTab==="plan" ? "nav-plan" : (currentTab==="ex" ? "nav-ex" : "nav-log");
+  const el = document.getElementById(activeId);
+  if(el) el.classList.add("active");
 }
 
 function firstExerciseSheet(){
@@ -435,8 +449,11 @@ async function init(){
   // UI bindings
   $("q").addEventListener("input", ()=>renderList());
   $("tab-plan").onclick = ()=>setActiveTab("plan");
+  const np=document.getElementById("nav-plan"); if(np) np.onclick=()=>setActiveTab("plan");
   $("tab-ex").onclick = ()=>setActiveTab("ex");
+  const ne=document.getElementById("nav-ex"); if(ne) ne.onclick=()=>setActiveTab("ex");
   $("tab-log").onclick = ()=>setActiveTab("log");
+  const nl=document.getElementById("nav-log"); if(nl) nl.onclick=()=>setActiveTab("log");
   $("btnToggleView").onclick = ()=>{ readablePlan = !readablePlan; $("btnToggleView").textContent = "Vista: " + (readablePlan ? "Leggibile" : "Tabella"); if(currentTab==="plan") renderSheet(currentSheet||"Overview"); };
   $("btnExport").onclick = ()=>exportBackup();
   $("btnReset").onclick = ()=>resetAll();
