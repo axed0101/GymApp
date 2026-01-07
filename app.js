@@ -617,9 +617,7 @@ function renderRawSheet(sheetName, fromExercise=false){
         });
       }catch(e){}
     }
-  }
-
-  container.appendChild(top);
+  }\n\n  container.appendChild(top);
 
   const wrap = document.createElement("div");
   wrap.style.overflow="auto";
@@ -698,7 +696,7 @@ function colLetter(n){
 
 /* ========= Local log (IndexedDB) ========= */
 const DB_NAME="workout_offline_db";
-const DB_VER=3;
+const DB_VER=4;
 let db=null;
 
 function openDb(){
@@ -1024,8 +1022,8 @@ async function init(){
 
   buildPlanIndex();
   await openDb();
-  await dailyAutoBackup();
-  await registerSw();
+  if(typeof dailyAutoBackup==="function") await dailyAutoBackup();
+await registerSw();
 
   // UI bindings
   $("q").addEventListener("input", ()=>renderList());
