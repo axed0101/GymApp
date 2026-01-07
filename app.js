@@ -1,15 +1,116 @@
-/* Offline Workout Plan Viewer + Simple Log
-   - Reads embedded Excel->JSON (data.json)
-   - Shows sheets (Plan + Exercise sheets)
-   - Stores your personal logs locally in IndexedDB
+/* GymApp Offline (v4)
+   - Plan tab: Month -> Week -> Day (nested like folders)
+   - Day view: cards with exercises (sets/reps/rest/target) + open exercise detail
+   - Exercises tab: list + open sheet
+   - Log tab: local IndexedDB diary
 */
 const PLAN_SHEETS = ["Overview","January","February","March-Apr"];
 
 let DATA = null;
 let currentTab = "plan"; // plan | ex | log
-let currentSheet = null;
+let currentSheet = null;  // used for exercise detail
+let currentPlan = { month: "January", weekIdx: 0, dayIdx: 0 };
 
 const $ = (id)=>document.getElementById(id);
+
+function normalize(s){ return (s||"").toLowerCase().trim(); }
+function escapeHtml(str){
+  return (str||"").toString().replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+}
+
+/* ========= Plan parsing ========= */
+function cellV(cell){ return (cell && cell.v!=null) ? String(cell.v).trim() : ""; }
+
+function parseMonth(monthName){
+  const sheet = DATA[monthName];
+  if(!sheet) return {month: monthName, weeks: []};
+
+  const grid = sheet.grid;
+  const rows = grid.map(r => r.map(cellV));
+
+  const weeks = [];
+  let w = null;
+  let d = null;
+
+  const isWeekRow = (r)=> normalize(r[0]).startsWith("week ");
+  const isDayRow  = (r)=> normalize(r[0]).startsWith("day ");
+
+  for(let i=0;i<rows.length;i++){
+    const r = rows[i];
+    const first = r[0];
+
+    if(!first) continue;
+
+    if(isWeekRow(r)){
+      // close previous
+      if(d && w){ w.days.push(d); d=null; }
+      if(w){ weeks.push(w); }
+      w = { title: first, days: [], startRow: i };
+      continue;
+    }
+
+    if(isDayRow(r)){
+      if(!w){
+        // sometimes a day appears before week; create a default week bucket
+        w = { title: "Week", days: [], startRow: i };
+      }
+      if(d){ w.days.push(d); }
+      d = { title: first, exercises: [], startRow: i };
+      continue;
+    }
+
+    // within a day: look for exercise rows (skip header "Exercise")
+    if(d){
+      if(normalize(first)==="exercise") continue;
+      // stop day if a new week/day begins (handled above) else parse exercise line if meaningful
+      const ex = first;
+      const sets = r[1] || "";
+      const rest = r[2] || "";
+      const target = r[3] || "";
+      const notes = r[5] || "";
+      // only treat as exercise if the name isn't empty and not just separators
+      const joined = r.join(" ").trim();
+      if(!joined) continue;
+      if(joined.replace(/[-–—_ ]/g,"").length===0) continue;
+
+      // filter out obvious section comments inside day (rare)
+      // if sets/rest/target all empty but notes empty too, still might be a label; keep anyway
+      d.exercises.push({ name: ex, sets, rest, target, notes });
+    }
+  }
+
+  if(d && w){ w.days.push(d); }
+  if(w){ weeks.push(w); }
+
+  // Remove empty weeks/days
+  const cleanWeeks = weeks.map(wk=>({
+    title: wk.title,
+    days: (wk.days||[]).filter(dd => (dd.exercises||[]).length>0)
+  })).filter(wk=>wk.days.length>0);
+
+  return { month: monthName, weeks: cleanWeeks };
+}
+
+let PLAN_INDEX = null; // { months: {January: {...}, ...} }
+
+function buildPlanIndex(){
+  const months = {};
+  for(const m of ["January","February","March-Apr"]){
+    months[m] = parseMonth(m);
+  }
+  PLAN_INDEX = months;
+
+  // set a safe default currentPlan
+  for(const m of Object.keys(months)){
+    const mw = months[m].weeks;
+    if(mw.length){
+      currentPlan.month = m;
+      currentPlan.weekIdx = 0;
+      currentPlan.dayIdx = 0;
+      break;
+    }
+  }
+}
 
 function setActiveTab(tab){
   currentTab = tab;
@@ -19,9 +120,9 @@ function setActiveTab(tab){
   renderList();
   syncNav();
   if(tab==="log") renderLogView();
-  else renderSheet( (tab==="plan") ? "Overview" : firstExerciseSheet() );
+  if(tab==="ex") renderExerciseListLanding();
+  if(tab==="plan") renderCurrentDay();
 }
-
 
 function syncNav(){
   const ids = ["nav-plan","nav-ex","nav-log"];
@@ -35,56 +136,81 @@ function syncNav(){
   if(el) el.classList.add("active");
 }
 
-function firstExerciseSheet(){
-  const all = Object.keys(DATA||{});
-  for(const s of all){
-    if(!PLAN_SHEETS.includes(s)) return s;
-  }
-  return "Overview";
-}
-
-function sheetGroup(sheetName){
-  return PLAN_SHEETS.includes(sheetName) ? "Piano" : "Esercizi";
-}
-
-function normalize(s){ return (s||"").toLowerCase(); }
-
+/* ========= Sidebar list ========= */
 function renderList(){
   const list = $("list");
   list.innerHTML = "";
   if(!DATA) return;
 
   const q = normalize($("q").value);
-  const allNames = Object.keys(DATA);
 
-  const filtered = allNames.filter(n=>{
-    if(currentTab==="plan" && !PLAN_SHEETS.includes(n)) return false;
-    if(currentTab==="ex" && PLAN_SHEETS.includes(n)) return false;
-    if(currentTab==="log") return false;
-    return !q || normalize(n).includes(q);
-  });
+  if(currentTab==="plan"){
+    // Month -> Week -> Day tree
+    for(const mName of Object.keys(PLAN_INDEX)){
+      const monthObj = PLAN_INDEX[mName];
+      if(!monthObj.weeks.length) continue;
 
-  const bySection = new Map();
-  for(const n of filtered){
-    const sec = sheetGroup(n);
-    if(!bySection.has(sec)) bySection.set(sec, []);
-    bySection.get(sec).push(n);
+      const mHeader = document.createElement("div");
+      mHeader.className="sectionTitle";
+      mHeader.textContent=mName;
+      list.appendChild(mHeader);
+
+      monthObj.weeks.forEach((wk, wi)=>{
+        const wkDiv = document.createElement("div");
+        wkDiv.className="item" + ((currentPlan.month===mName && currentPlan.weekIdx===wi) ? " active" : "");
+        wkDiv.innerHTML = `<div>📦 ${escapeHtml(wk.title)}</div><small>${wk.days.length} day</small>`;
+        wkDiv.onclick = ()=>{
+          currentPlan.month = mName;
+          currentPlan.weekIdx = wi;
+          currentPlan.dayIdx = 0;
+          renderList();
+          renderCurrentDay();
+        };
+        // filter by search: if q is set, only show weeks/days matching
+        if(q && !normalize(wk.title).includes(q) && !wk.days.some(d=>normalize(d.title).includes(q) || d.exercises.some(e=>normalize(e.name).includes(q)))) {
+          return;
+        }
+        list.appendChild(wkDiv);
+
+        // days under week
+        wk.days.forEach((day, di)=>{
+          if(q && !(normalize(day.title).includes(q) || day.exercises.some(e=>normalize(e.name).includes(q)))) return;
+
+          const dayDiv = document.createElement("div");
+          dayDiv.className="item";
+          dayDiv.style.marginLeft="14px";
+          const active = (currentPlan.month===mName && currentPlan.weekIdx===wi && currentPlan.dayIdx===di);
+          dayDiv.className = "item" + (active ? " active" : "");
+          dayDiv.innerHTML = `<div>📄 ${escapeHtml(day.title)}</div><small>${day.exercises.length} esercizi</small>`;
+          dayDiv.onclick = ()=>{
+            currentPlan.month = mName;
+            currentPlan.weekIdx = wi;
+            currentPlan.dayIdx = di;
+            renderList();
+            renderCurrentDay();
+          };
+          list.appendChild(dayDiv);
+        });
+      });
+    }
+    return;
   }
 
-  for(const [sec, items] of bySection.entries()){
+  if(currentTab==="ex"){
+    const allNames = Object.keys(DATA).filter(n=>!PLAN_SHEETS.includes(n));
+    const filtered = allNames.filter(n=>!q || normalize(n).includes(q)).sort((a,b)=>a.localeCompare(b));
     const h = document.createElement("div");
     h.className="sectionTitle";
-    h.textContent=sec;
+    h.textContent="Esercizi";
     list.appendChild(h);
-
-    items.sort((a,b)=>a.localeCompare(b));
-    for(const name of items){
+    for(const name of filtered){
       const div = document.createElement("div");
       div.className="item" + (currentSheet===name ? " active":"");
-      div.innerHTML = `<div>${escapeHtml(name)}</div><small>Tocca per aprire</small>`;
-      div.onclick = ()=>renderSheet(name);
+      div.innerHTML = `<div>💪 ${escapeHtml(name)}</div><small>Scheda tecnica</small>`;
+      div.onclick = ()=>renderExerciseDetail(name);
       list.appendChild(div);
     }
+    return;
   }
 
   if(currentTab==="log"){
@@ -94,44 +220,180 @@ function renderList(){
     list.appendChild(h);
     const div = document.createElement("div");
     div.className="item active";
-    div.innerHTML = `<div>Workout Log</div><small>Note personali sul training</small>`;
+    div.innerHTML = `<div>📝 Diario allenamento</div><small>Solo sul tuo iPhone</small>`;
     list.appendChild(div);
+    return;
   }
 }
 
-function escapeHtml(str){
-  return (str||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+/* ========= Plan views ========= */
+function getCurrentDayObj(){
+  const m = PLAN_INDEX[currentPlan.month];
+  if(!m) return null;
+  const w = m.weeks[currentPlan.weekIdx];
+  if(!w) return null;
+  const d = w.days[currentPlan.dayIdx];
+  if(!d) return null;
+  return {month: currentPlan.month, weekTitle: w.title, day: d, weekIdx: currentPlan.weekIdx, dayIdx: currentPlan.dayIdx};
 }
 
-function renderSheet(name){
-  if(!DATA) return;
-  currentSheet = name;
-  // highlight active item
-  renderList();
-
-  $("title").textContent = name;
-  $("subtitle").textContent = (PLAN_SHEETS.includes(name) ? "Piano allenamento" : "Scheda esercizio");
-
-  const sheet = DATA[name];
-  const { grid, min_row, min_col, max_row, max_col } = sheet;
-
+function renderCurrentDay(){
+  const obj = getCurrentDayObj();
   const container = $("content");
   container.innerHTML = "";
-  if(PLAN_SHEETS.includes(name) && readablePlan){
-    renderPlanReadable(name);
+
+  if(!obj){
+    $("title").textContent = "Piano";
+    $("subtitle").textContent = "Nessun dato trovato";
+    container.innerHTML = `<div class="card"><h3>Nessun piano</h3><div class="hint">Non riesco a leggere la struttura del mese. Dimmi se vuoi che la adatti a mano.</div></div>`;
     return;
   }
 
-  // small hint for exercise sheets
-  if(!PLAN_SHEETS.includes(name)){
-    const card = document.createElement("div");
-    card.className="card";
-    card.innerHTML = `
-      <h3>Tip veloce</h3>
-      <div class="hint">Se vedi un link (blu), è quello che nel tuo Excel portava alla ricerca Google Images. Toccalo e si apre nel browser.</div>
+  $("title").textContent = obj.day.title;
+  $("subtitle").textContent = `${obj.month} • ${obj.weekTitle}`;
+
+  // header controls
+  const header = document.createElement("div");
+  header.className="card";
+  header.innerHTML = `
+    <h3>Sessione</h3>
+    <div class="hint">Scorri gli esercizi. Tocca “Dettagli” per la scheda tecnica. I link esterni (immagini) restano disponibili nella scheda esercizio.</div>
+    <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn" id="btnPrevDay">⬅️ Giorno</button>
+      <button class="btn" id="btnNextDay">Giorno ➡️</button>
+      <button class="btn" id="btnOpenMonthTable">🗂️ Apri tabella mese</button>
+    </div>
+  `;
+  container.appendChild(header);
+
+  header.querySelector("#btnPrevDay").onclick = ()=>stepDay(-1);
+  header.querySelector("#btnNextDay").onclick = ()=>stepDay(1);
+  header.querySelector("#btnOpenMonthTable").onclick = ()=>renderRawSheet(obj.month);
+
+  // exercises
+  const list = document.createElement("div");
+  list.className="split";
+
+  obj.day.exercises.forEach((ex, idx)=>{
+    const c = document.createElement("div");
+    c.className="card";
+    const hasSheet = Object.prototype.hasOwnProperty.call(DATA, ex.name);
+    const target = ex.target && ex.target.startsWith("=") ? "calcolato in Excel" : (ex.target || "");
+    c.innerHTML = `
+      <h3>${idx+1}. ${escapeHtml(ex.name)}</h3>
+      <div class="row" style="margin-top:8px">
+        ${ex.sets ? `<span class="pill" style="cursor:default" data-ico="🔁">${escapeHtml(ex.sets)}</span>` : ""}
+        ${ex.rest ? `<span class="pill" style="cursor:default" data-ico="⏱️">${escapeHtml(ex.rest)}</span>` : ""}
+        ${target ? `<span class="pill" style="cursor:default" data-ico="🎯">${escapeHtml(target)}</span>` : ""}
+      </div>
+      ${ex.notes ? `<div class="hint" style="margin-top:10px">${escapeHtml(ex.notes)}</div>` : ``}
+      <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+        ${hasSheet ? `<button class="btn primary" data-open="${escapeHtml(ex.name)}">📄 Dettagli</button>` : `<span class="hint">Nessuna scheda trovata</span>`}
+        <button class="btn" data-addlog="${escapeHtml(ex.name)}">📝 Log</button>
+      </div>
     `;
-    container.appendChild(card);
+    list.appendChild(c);
+  });
+
+  container.appendChild(list);
+
+  // wire buttons
+  container.querySelectorAll("button[data-open]").forEach(b=>{
+    b.onclick = ()=>renderExerciseDetail(b.getAttribute("data-open"));
+  });
+  container.querySelectorAll("button[data-addlog]").forEach(b=>{
+    const name = b.getAttribute("data-addlog");
+    b.onclick = async ()=>{
+      setActiveTab("log");
+      // preselect exercise inside log view
+      setTimeout(()=>{
+        const sel = document.getElementById("logEx");
+        if(sel){ sel.value = name; }
+      }, 50);
+    };
+  });
+}
+
+function stepDay(delta){
+  const m = PLAN_INDEX[currentPlan.month];
+  if(!m) return;
+  let wi = currentPlan.weekIdx;
+  let di = currentPlan.dayIdx + delta;
+
+  while(true){
+    const w = m.weeks[wi];
+    if(!w) break;
+    if(di >=0 && di < w.days.length){
+      currentPlan.weekIdx = wi;
+      currentPlan.dayIdx = di;
+      break;
+    }
+    if(di < 0){
+      wi -= 1;
+      if(wi < 0) wi = 0;
+      di = (m.weeks[wi] ? m.weeks[wi].days.length-1 : 0);
+      if(wi===0 && di<0) di=0;
+    } else {
+      wi += 1;
+      if(wi >= m.weeks.length){ wi = m.weeks.length-1; di = m.weeks[wi].days.length-1; }
+      else di = 0;
+    }
+    // stop if stuck
+    if(wi===currentPlan.weekIdx && di===currentPlan.dayIdx) break;
   }
+
+  renderList();
+  renderCurrentDay();
+}
+
+/* ========= Exercise sheet (raw) ========= */
+function isInternalLink(link){
+  if(!link) return null;
+  const s = String(link);
+  if(s.startsWith("#")){
+    const t = s.slice(1);
+    const m = t.match(/^'([^']+)'!/) || t.match(/^([^!]+)!/);
+    if(m) return {sheet: m[1].trim()};
+    if(t.trim()) return {sheet: t.trim().replace(/^'|'$/g,"")};
+  }
+  if(s.includes("!") && !s.startsWith("http")){
+    const m = s.match(/^'([^']+)'!/) || s.match(/^([^!]+)!/);
+    if(m) return {sheet: m[1].trim()};
+  }
+  return null;
+}
+
+function renderExerciseListLanding(){
+  currentSheet = null;
+  $("title").textContent="Esercizi";
+  $("subtitle").textContent="Apri una scheda tecnica dalla lista";
+  const container=$("content");
+  container.innerHTML = `<div class="card"><h3>Catalogo esercizi</h3><div class="hint">Cerca a sinistra e apri una scheda. I link blu aprono la ricerca Google Images.</div></div>`;
+}
+
+function renderExerciseDetail(name){
+  currentSheet = name;
+  renderList();
+  $("title").textContent = name;
+  $("subtitle").textContent = "Scheda esercizio";
+
+  renderRawSheet(name, true);
+}
+
+function renderRawSheet(sheetName, fromExercise=false){
+  const sheet = DATA[sheetName];
+  const { grid, min_row, min_col, max_col } = sheet;
+
+  const container = $("content");
+  container.innerHTML = "";
+
+  const top = document.createElement("div");
+  top.className="card";
+  top.innerHTML = `
+    <h3>${fromExercise ? "Quick guide" : "Tabella completa"}</h3>
+    <div class="hint">${fromExercise ? "Link blu = immagini. Link interni = navigazione dentro l’app." : "Questa è la tabella originale del foglio. Utile se vuoi vedere formule / colonne."}</div>
+  `;
+  container.appendChild(top);
 
   const wrap = document.createElement("div");
   wrap.style.overflow="auto";
@@ -171,15 +433,18 @@ function renderSheet(name){
         const internal = isInternalLink(l);
         if(internal){
           const a = document.createElement("a");
-          a.href = "#";
+          a.href="#";
           a.textContent = v || internal.sheet;
-          a.onclick = (ev)=>{ ev.preventDefault(); renderSheet(internal.sheet); };
+          a.onclick = (ev)=>{ ev.preventDefault(); 
+            if(PLAN_SHEETS.includes(internal.sheet)) { currentTab="plan"; setActiveTab("plan"); renderRawSheet(internal.sheet,false); }
+            else { setActiveTab("ex"); renderExerciseDetail(internal.sheet); }
+          };
           td.appendChild(a);
         } else {
           const a = document.createElement("a");
           a.href = l;
-          a.target = "_blank";
-          a.rel = "noopener";
+          a.target="_blank";
+          a.rel="noopener";
           a.textContent = v || l;
           td.appendChild(a);
         }
@@ -195,70 +460,7 @@ function renderSheet(name){
   container.appendChild(wrap);
 }
 
-
-function isInternalLink(link){
-  // Excel internal hyperlinks often look like "#Sheet!A1" or "#'Sheet Name'!A1"
-  if(!link) return null;
-  const s = String(link);
-  if(s.startsWith("#")){
-    const t = s.slice(1);
-    const m = t.match(/^'([^']+)'!/) || t.match(/^([^!]+)!/);
-    if(m) return {sheet: m[1].trim()};
-    if(t.trim()) return {sheet: t.trim().replace(/^'|'$/g,"")};
-  }
-  if(s.includes("!") && !s.startsWith("http")){
-    const m = s.match(/^'([^']+)'!/) || s.match(/^([^!]+)!/);
-    if(m) return {sheet: m[1].trim()};
-  }
-  return null;
-}
-
-let readablePlan = true;
-
-function renderPlanReadable(sheetName){
-  const sheet = DATA[sheetName];
-  const { grid } = sheet;
-  const rows = grid.map(r => r.map(c => (c?.v ?? "").toString().trim()));
-  let headerIdx = rows.findIndex(r => r.join(" ").toLowerCase().includes("exercise") || r.join(" ").toLowerCase().includes("sets") || r.join(" ").toLowerCase().includes("reps"));
-  if(headerIdx<0) headerIdx = 0;
-
-  const items=[];
-  for(let i=headerIdx+1;i<rows.length;i++){
-    const r = rows[i];
-    const joined=r.join(" ").trim();
-    if(!joined) continue;
-    if(joined.replace(/[-–—_ ]/g,"").length===0) continue;
-    const exIdx = r.findIndex(x=>x);
-    if(exIdx<0) continue;
-    const ex = r[exIdx];
-    const rest = r.slice(exIdx+1).filter(x=>x);
-    items.push({exercise: ex, cols: rest.slice(0,6)});
-  }
-
-  const container = $("content");
-  container.innerHTML="";
-  const top = document.createElement("div");
-  top.className="card";
-  top.innerHTML = `
-    <h3>Piano (vista leggibile)</h3>
-    <div class="hint">Vista più pulita della tabella. Se vuoi la tabella completa, usa il bottone “Vista” in alto.</div>
-  `;
-  container.appendChild(top);
-
-  const list = document.createElement("div");
-  list.className="split";
-  for(const it of items){
-    const c=document.createElement("div");
-    c.className="card";
-    c.innerHTML = `<h3>${escapeHtml(it.exercise)}</h3>
-      <div class="hint">${escapeHtml(it.cols.join(" • "))}</div>`;
-    list.appendChild(c);
-  }
-  container.appendChild(list);
-}
-
 function colLetter(n){
-  // 1->A
   let s="";
   while(n>0){
     const m=(n-1)%26;
@@ -276,7 +478,7 @@ let db=null;
 function openDb(){
   return new Promise((resolve,reject)=>{
     const req = indexedDB.open(DB_NAME, DB_VER);
-    req.onupgradeneeded = (e)=>{
+    req.onupgradeneeded = ()=>{
       const d = req.result;
       if(!d.objectStoreNames.contains("logs")){
         const store = d.createObjectStore("logs", { keyPath:"id" });
@@ -327,7 +529,7 @@ async function renderLogView(){
   const card = document.createElement("div");
   card.className="card";
   card.innerHTML = `
-    <h3>Aggiungi nota</h3>
+    <h3>Scrivi una nota</h3>
     <div class="row" style="margin-bottom:10px">
       <input id="logDate" type="date" />
       <select id="logEx" aria-label="Esercizio"></select>
@@ -335,20 +537,18 @@ async function renderLogView(){
     </div>
     <textarea id="logNote" placeholder="Note / RIR / sensazioni…"></textarea>
     <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn" id="btnSaveLog">Salva</button>
-      <div class="hint">Consiglio: usalo come diario rapido. I dati restano sul telefono.</div>
+      <button class="btn primary" id="btnSaveLog">✅ Salva</button>
+      <div class="hint">Suggerimento: scrivi 1 riga per set pesante (RIR incluso).</div>
     </div>
   `;
   container.appendChild(card);
 
-  // fill select
   const sel = card.querySelector("#logEx");
   for(const ex of exercises){
     const opt=document.createElement("option");
     opt.value=ex; opt.textContent=ex;
     sel.appendChild(opt);
   }
-  // default date today
   const today = new Date();
   const yyyy=today.getFullYear();
   const mm=String(today.getMonth()+1).padStart(2,"0");
@@ -416,7 +616,7 @@ async function exportBackup(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href=url;
-  a.download="workout_offline_backup.json";
+  a.download="gymapp_offline_backup.json";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -443,18 +643,20 @@ async function init(){
   const res = await fetch("data.json");
   DATA = await res.json();
 
+  buildPlanIndex();
   await openDb();
   await registerSw();
 
   // UI bindings
   $("q").addEventListener("input", ()=>renderList());
   $("tab-plan").onclick = ()=>setActiveTab("plan");
-  const np=document.getElementById("nav-plan"); if(np) np.onclick=()=>setActiveTab("plan");
   $("tab-ex").onclick = ()=>setActiveTab("ex");
-  const ne=document.getElementById("nav-ex"); if(ne) ne.onclick=()=>setActiveTab("ex");
   $("tab-log").onclick = ()=>setActiveTab("log");
+  const np=document.getElementById("nav-plan"); if(np) np.onclick=()=>setActiveTab("plan");
+  const ne=document.getElementById("nav-ex"); if(ne) ne.onclick=()=>setActiveTab("ex");
   const nl=document.getElementById("nav-log"); if(nl) nl.onclick=()=>setActiveTab("log");
-  $("btnToggleView").onclick = ()=>{ readablePlan = !readablePlan; $("btnToggleView").textContent = "Vista: " + (readablePlan ? "Leggibile" : "Tabella"); if(currentTab==="plan") renderSheet(currentSheet||"Overview"); };
+
+  $("btnToggleView").style.display="none"; // v4: plan is folder view; hide old toggle
   $("btnExport").onclick = ()=>exportBackup();
   $("btnReset").onclick = ()=>resetAll();
 
