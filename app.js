@@ -103,6 +103,10 @@ function renderSheet(name){
 
   const container = $("content");
   container.innerHTML = "";
+  if(PLAN_SHEETS.includes(name) && readablePlan){
+    renderPlanReadable(name);
+    return;
+  }
 
   // small hint for exercise sheets
   if(!PLAN_SHEETS.includes(name)){
@@ -150,13 +154,22 @@ function renderSheet(name){
       const v = cell.v ?? "";
       const l = cell.l;
       if(l){
-        const a = document.createElement("a");
-        a.href = l;
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.textContent = v || l;
-        td.appendChild(a);
-      }else{
+        const internal = isInternalLink(l);
+        if(internal){
+          const a = document.createElement("a");
+          a.href = "#";
+          a.textContent = v || internal.sheet;
+          a.onclick = (ev)=>{ ev.preventDefault(); renderSheet(internal.sheet); };
+          td.appendChild(a);
+        } else {
+          const a = document.createElement("a");
+          a.href = l;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.textContent = v || l;
+          td.appendChild(a);
+        }
+      } else {
         td.textContent = v;
       }
       tr.appendChild(td);
@@ -166,6 +179,68 @@ function renderSheet(name){
   table.appendChild(tbody);
   wrap.appendChild(table);
   container.appendChild(wrap);
+}
+
+
+function isInternalLink(link){
+  // Excel internal hyperlinks often look like "#Sheet!A1" or "#'Sheet Name'!A1"
+  if(!link) return null;
+  const s = String(link);
+  if(s.startsWith("#")){
+    const t = s.slice(1);
+    const m = t.match(/^'([^']+)'!/) || t.match(/^([^!]+)!/);
+    if(m) return {sheet: m[1].trim()};
+    if(t.trim()) return {sheet: t.trim().replace(/^'|'$/g,"")};
+  }
+  if(s.includes("!") && !s.startsWith("http")){
+    const m = s.match(/^'([^']+)'!/) || s.match(/^([^!]+)!/);
+    if(m) return {sheet: m[1].trim()};
+  }
+  return null;
+}
+
+let readablePlan = true;
+
+function renderPlanReadable(sheetName){
+  const sheet = DATA[sheetName];
+  const { grid } = sheet;
+  const rows = grid.map(r => r.map(c => (c?.v ?? "").toString().trim()));
+  let headerIdx = rows.findIndex(r => r.join(" ").toLowerCase().includes("exercise") || r.join(" ").toLowerCase().includes("sets") || r.join(" ").toLowerCase().includes("reps"));
+  if(headerIdx<0) headerIdx = 0;
+
+  const items=[];
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r = rows[i];
+    const joined=r.join(" ").trim();
+    if(!joined) continue;
+    if(joined.replace(/[-–—_ ]/g,"").length===0) continue;
+    const exIdx = r.findIndex(x=>x);
+    if(exIdx<0) continue;
+    const ex = r[exIdx];
+    const rest = r.slice(exIdx+1).filter(x=>x);
+    items.push({exercise: ex, cols: rest.slice(0,6)});
+  }
+
+  const container = $("content");
+  container.innerHTML="";
+  const top = document.createElement("div");
+  top.className="card";
+  top.innerHTML = `
+    <h3>Piano (vista leggibile)</h3>
+    <div class="hint">Vista più pulita della tabella. Se vuoi la tabella completa, usa il bottone “Vista” in alto.</div>
+  `;
+  container.appendChild(top);
+
+  const list = document.createElement("div");
+  list.className="split";
+  for(const it of items){
+    const c=document.createElement("div");
+    c.className="card";
+    c.innerHTML = `<h3>${escapeHtml(it.exercise)}</h3>
+      <div class="hint">${escapeHtml(it.cols.join(" • "))}</div>`;
+    list.appendChild(c);
+  }
+  container.appendChild(list);
 }
 
 function colLetter(n){
@@ -362,6 +437,7 @@ async function init(){
   $("tab-plan").onclick = ()=>setActiveTab("plan");
   $("tab-ex").onclick = ()=>setActiveTab("ex");
   $("tab-log").onclick = ()=>setActiveTab("log");
+  $("btnToggleView").onclick = ()=>{ readablePlan = !readablePlan; $("btnToggleView").textContent = "Vista: " + (readablePlan ? "Leggibile" : "Tabella"); if(currentTab==="plan") renderSheet(currentSheet||"Overview"); };
   $("btnExport").onclick = ()=>exportBackup();
   $("btnReset").onclick = ()=>resetAll();
 
