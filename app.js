@@ -789,7 +789,7 @@ async function getDayEntry(id){
 }
 
 async function dailyAutoBackup(){
-  // iOS Safari blocks automatic file downloads, so we save a daily snapshot INSIDE the app (IndexedDB).
+   // iOS Safari blocks automatic file downloads, so we save a daily snapshot INSIDE the app (IndexedDB).
   const today = new Date();
   const key = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
   const last = localStorage.getItem("lastAutoBackupDate");
