@@ -617,7 +617,10 @@ function renderRawSheet(sheetName, fromExercise=false){
         });
       }catch(e){}
     }
-  } container.appendChild(top);
+  } 
+   
+   container.appendChild(top);   
+   
 
   const wrap = document.createElement("div");
   wrap.style.overflow="auto";
