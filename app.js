@@ -621,6 +621,7 @@ function renderRawSheet(sheetName, fromExercise=false){
     }
   }
    
+   
    container.appendChild(top);
 
   const wrap = document.createElement("div");
