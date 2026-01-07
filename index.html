@@ -1,12 +1,169 @@
 <!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Gym App</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Workout Plan (Offline)</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#111111">
+  <style>
+    :root{--bg:#07090d;--panel:#0b0f16;--muted:#9aa4b2;--text:#e6eaf2;--line:#1b2533;--accent:#7c5cff;--accent2:#22c55e;--danger:#ef4444;}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text);height:100vh;display:flex}
+    header{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+    .app{width:100%;display:grid;grid-template-columns:320px 1fr;height:100vh}
+    .sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:280px}
+    .main{display:flex;flex-direction:column;min-width:0}
+    input,button,select,textarea{font:inherit}
+    .search{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+    .search input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#101114;color:var(--text)}
+    .pill{padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:#101114;color:var(--muted);cursor:pointer}
+    .pill.active{border-color:var(--accent);color:var(--text)}
+    .list{overflow:auto;padding:8px 8px 12px}
+    .sectionTitle{padding:10px 10px 6px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+    .item{padding:10px 10px;border-radius:12px;cursor:pointer;border:1px solid transparent}
+    .item:hover{background:#131419;border-color:#23252b}
+    .item.active{background:#111826;border-color:#2a3c66}
+    .item small{display:block;color:var(--muted);margin-top:4px}
+    .toolbar{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+    .toolbar .title{font-weight:650}
+    .toolbar .muted{color:var(--muted);font-size:13px}
+    .btn{padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text);cursor:pointer}
+    .btn:hover{border-color:#3a3d45}
+    .content{overflow:auto;padding:12px 14px}
+    .hint{color:var(--muted);font-size:13px;line-height:1.4}
+    table.grid{border-collapse:separate;border-spacing:0; width:max-content; max-width:100%}
+    table.grid td, table.grid th{border:1px solid var(--line);padding:6px 8px;vertical-align:top;background:#0f1013;min-width:90px;max-width:420px;white-space:pre-wrap;word-break:break-word}
+    table.grid th{position:sticky;top:0;background:#14151a;z-index:2}
+    table.grid td:first-child, table.grid th:first-child{position:sticky;left:0;background:#14151a;z-index:1}
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .split{display:grid;grid-template-columns:1fr;gap:14px}
+    .card{border:1px solid var(--line);background:#121318;border-radius:16px;padding:12px 12px}
+    .card h3{margin:0 0 8px 0;font-size:14px}
+    textarea{width:100%;min-height:90px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text)}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .row input, .row select{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text)}
+    .row input{min-width:160px}
+    .logList{display:flex;flex-direction:column;gap:10px}
+    .logItem{border:1px solid var(--line);border-radius:14px;padding:10px 10px;background:#0f1013}
+    .logItem .meta{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:12px}
+    .logItem .txt{margin-top:6px;white-space:pre-wrap}
+    .danger{border-color:#5a2a2a}
+    @media (max-width: 860px){
+      body{height:auto}
+      .app{grid-template-columns:1fr}
+      .sidebar{height:auto}
+    }
+  
+    .pill{display:inline-flex;align-items:center;gap:8px}
+    .pill::before{content:attr(data-ico);opacity:.9}
+    .btn{box-shadow:0 10px 25px rgba(0,0,0,.25)}
+    .btn.primary{border-color:rgba(124,92,255,.6)}
+    .btn.danger{border-color:rgba(239,68,68,.6)}
+    .toolbar{background:linear-gradient(180deg,rgba(11,15,22,.9),rgba(7,9,13,0));backdrop-filter: blur(6px)}
+    .card{background:linear-gradient(180deg,rgba(16,22,34,.9),rgba(10,14,22,.9));border:1px solid rgba(27,37,51,.9);box-shadow:0 18px 40px rgba(0,0,0,.35)}
+    table.grid td, table.grid th{background:#05070b}
+    table.grid th{background:#0c111a}
+    table.grid td:first-child, table.grid th:first-child{background:#0c111a}
+    a{color:var(--accent)}
+    a:hover{color:#a89bff}
+    .bottomNav{display:none}
+    @media (max-width: 860px){
+      .toolbar{padding-bottom:74px}
+      .bottomNav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:10;background:rgba(11,15,22,.92);border-top:1px solid var(--line);backdrop-filter: blur(10px)}
+      .navBtn{flex:1;padding:10px 8px;border:none;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px}
+      .navBtn .ico{font-size:18px}
+      .navBtn.active{color:var(--text)}
+      .content{padding-bottom:92px}
+    }
+
+  
+    /* Mobile detail mode: show content full-screen, hide sidebar list */
+    body.mobileDetail .sidebar{display:none !important;}
+    body.mobileDetail .app{grid-template-columns:1fr !important;}
+    body.mobileDetail #btnBack{display:inline-flex !important;}
+    @media (max-width: 860px){
+      body.mobileDetail .toolbar{position:sticky;top:0;z-index:20}
+    }
+
+  
+    .modalOverlay{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter: blur(6px);padding:18px}
+    .modalCard{width:min(520px,100%);background:linear-gradient(180deg,rgba(16,22,34,.96),rgba(10,14,22,.96));border:1px solid rgba(27,37,51,.95);border-radius:18px;box-shadow:0 30px 70px rgba(0,0,0,.5);padding:14px 14px 12px;position:relative}
+    .modalClose{position:absolute;right:10px;top:10px;border:none;background:transparent;color:var(--muted);font-size:18px;cursor:pointer}
+    .modalClose:hover{color:var(--text)}
+    .modalTitle{font-weight:800;margin-bottom:8px}
+    .modalBody{color:var(--text);opacity:.92;line-height:1.35;white-space:pre-wrap}
+    .field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+    .field label{font-size:12px;color:var(--muted)}
+    .field input,.field textarea{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text)}
+    .field textarea{min-height:86px}
+
+  </style>
 </head>
 <body>
-<div id="content">Loading…</div>
+<div class="app">
+  <aside class="sidebar">
+    <header>
+      <div style="display:flex;flex-direction:column;gap:2px">
+  <div style="font-weight:850;letter-spacing:.2px;display:flex;align-items:center;gap:10px">
+    <span style="display:inline-flex;width:28px;height:28px;border-radius:10px;background:linear-gradient(135deg,#1f2937,#0b1220);border:1px solid var(--line);align-items:center;justify-content:center">🏋️</span>
+    <span>GymApp</span>
+  </div>
+  <div style="font-size:12px;color:var(--muted)">Offline • dark fitness</div>
+</div>
+    </header>
+
+    <div class="search">
+      <input id="q" placeholder="Cerca sheet o esercizio…" autocomplete="off" />
+    </div>
+
+    <div class="search" style="border-bottom:none;padding-top:0">
+      <button class="pill active" id="tab-plan" data-ico="📅">Piano</button>
+      <button class="pill" id="tab-ex" data-ico="💪">Esercizi</button>
+      <button class="pill" id="tab-log" data-ico="📝">Log</button>
+    </div>
+
+    <div class="list" id="list"></div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <button class="btn" id="btnBack" style="display:none">⬅️ Lista</button>
+      <div class="title" id="title">Caricamento…</div>
+      <div class="muted" id="subtitle"></div>
+      <div style="flex:1"></div>
+      <button class="btn" id="btnToggleView">🧭 Vista: Leggibile</button>
+      <button class="btn" id="btnImport">⬆️ Importa backup</button>
+      <button class="btn" id="btnExport">⬇️ Esporta backup</button>
+      <button class="btn danger" id="btnReset">🧨 Reset dati locali</button>
+    </div>
+    <div class="content" id="content">
+      <div class="hint">Sto caricando i dati…</div>
+    </div>
+  </main>
+</div>
+
+<input id="fileImport" type="file" accept="application/json" style="display:none" />
 <script src="app.js"></script>
+
+<div id="bottomNav" class="bottomNav">
+  <button class="navBtn active" id="nav-plan" aria-label="Piano"><span class="ico">📅</span><span>Piano</span></button>
+  <button class="navBtn" id="nav-ex" aria-label="Esercizi"><span class="ico">💪</span><span>Esercizi</span></button>
+  <button class="navBtn" id="nav-log" aria-label="Log"><span class="ico">📝</span><span>Log</span></button>
+</div>
+
+
+<div id="modalOverlay" class="modalOverlay" style="display:none">
+  <div class="modalCard">
+    <button class="modalClose" id="modalClose" aria-label="Chiudi">✕</button>
+    <div class="modalTitle" id="modalTitle">Avviso</div>
+    <div class="modalBody" id="modalBody"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn primary" id="modalOk">OK</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
