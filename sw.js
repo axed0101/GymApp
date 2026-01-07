@@ -1,11 +1,13 @@
 // Simple offline cache for PWA
-const CACHE = "gymapp-v113-accordion";
+const CACHE = "gymapp-v11.1-accordion";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
   "./data.json",
   "./manifest.json"
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {

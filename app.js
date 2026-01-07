@@ -190,29 +190,34 @@ function renderList(){
       list.appendChild(mHeader);
 
       monthObj.weeks.forEach((wk, wi)=>{
+        const weekKey = mName + "|" + wi;
+        const weekMatches = (!q) ? true : (normalize(wk.title).includes(q) || wk.days.some(d=>normalize(d.title).includes(q) || d.exercises.some(e=>normalize(e.name).includes(q))));
+        if(q && !weekMatches) return;
+
+        const isOpen = (openWeekKey === weekKey) || (q && weekMatches);
+        const isActiveWeek = (currentPlan.month===mName && currentPlan.weekIdx===wi);
+
         const wkDiv = document.createElement("div");
-        wkDiv.className="item" + ((currentPlan.month===mName && currentPlan.weekIdx===wi) ? " active" : "");
-        wkDiv.innerHTML = `<div>📦 ${escapeHtml(wk.title)}</div><small>${wk.days.length} day</small>`;
+        wkDiv.className = "item" + (isActiveWeek ? " active" : "");
+        wkDiv.innerHTML = `<div>${isOpen ? "📂" : "📁"} ${escapeHtml(wk.title)}</div><small>${wk.days.length} day</small>`;
         wkDiv.onclick = ()=>{
+          // toggle accordion
+          openWeekKey = (openWeekKey === weekKey) ? null : weekKey;
           currentPlan.month = mName;
           currentPlan.weekIdx = wi;
-          currentPlan.dayIdx = 0;
+          if(typeof currentPlan.dayIdx!=="number") currentPlan.dayIdx = 0;
           renderList();
-          renderCurrentDay();
         };
-        // filter by search: if q is set, only show weeks/days matching
-        if(q && !normalize(wk.title).includes(q) && !wk.days.some(d=>normalize(d.title).includes(q) || d.exercises.some(e=>normalize(e.name).includes(q)))) {
-          return;
-        }
         list.appendChild(wkDiv);
+
+        if(!isOpen) return;
 
         // days under week
         wk.days.forEach((day, di)=>{
           if(q && !(normalize(day.title).includes(q) || day.exercises.some(e=>normalize(e.name).includes(q)))) return;
 
           const dayDiv = document.createElement("div");
-          dayDiv.className="item";
-          dayDiv.style.marginLeft="14px";
+          dayDiv.style.marginLeft = "14px";
           const active = (currentPlan.month===mName && currentPlan.weekIdx===wi && currentPlan.dayIdx===di);
           dayDiv.className = "item" + (active ? " active" : "");
           dayDiv.innerHTML = `<div>📄 ${escapeHtml(day.title)}</div><small>${day.exercises.length} esercizi</small>`;
@@ -220,6 +225,8 @@ function renderList(){
             currentPlan.month = mName;
             currentPlan.weekIdx = wi;
             currentPlan.dayIdx = di;
+            // keep the week open after selecting a day
+            openWeekKey = weekKey;
             renderList();
             renderCurrentDay();
           };
@@ -572,57 +579,16 @@ function renderRawSheet(sheetName, fromExercise=false){
   `;
   if(fromExercise){
     const block = top.querySelector("#photoBlock");
-    block.innerHTML = `
-      <div class="hint">Foto: per motivi tecnici e di diritti/CORS non posso “prendere le prime 3 da Google Images” automaticamente. Però le riempio in automatico con 3 risultati da Wikimedia (gratis e compatibile). Se non ti piacciono, puoi aprire Google Images e incollare 3 URL manualmente.</div>
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px">
-        <div class="card" style="padding:8px"><img id="ph1" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnG">🔎 Google</button><button class="btn" id="btnU1">📌 URL 1</button></div></div>
-        <div class="card" style="padding:8px"><img id="ph2" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnU2">📌 URL 2</button></div></div>
-        <div class="card" style="padding:8px"><img id="ph3" style="width:100%;aspect-ratio:1/1;border-radius:12px;object-fit:cover;border:1px solid var(--line)" /><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="btnU3">📌 URL 3</button></div></div>
-      </div>
-    `;
     const q = encodeURIComponent(sheetName);
-    top.querySelector("#btnG").onclick = ()=>window.open(`https://www.google.com/search?tbm=isch&q=${q}`, "_blank");
-    const keyBase = `img_${sheetName}_`;
-    function setImg(n, url){
-      const img = top.querySelector(`#ph${n}`);
-      img.src = url || "";
-      img.alt = sheetName + " photo " + n;
-      if(url) localStorage.setItem(keyBase+n, url);
-    }
-    function promptUrl(n){
-      const cur = localStorage.getItem(keyBase+n) || "";
-      const url = prompt(`Incolla URL immagine ${n}`, cur);
-      if(url!=null && url.trim()) setImg(n, url.trim());
-    }
-    top.querySelector("#btnU1").onclick = ()=>promptUrl(1);
-    top.querySelector("#btnU2").onclick = ()=>promptUrl(2);
-    top.querySelector("#btnU3").onclick = ()=>promptUrl(3);
-
-    // restore if already set
-    for(const n of [1,2,3]){
-      const saved = localStorage.getItem(keyBase+n);
-      if(saved) setImg(n, saved);
-    }
-
-    // auto-fill from Wikimedia if empty
-    const missing = [1,2,3].filter(n=>!localStorage.getItem(keyBase+n));
-    if(missing.length){
-      try{
-        const api = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(sheetName)}&gsrlimit=6&prop=pageimages&pithumbsize=400&format=json&origin=*`;
-        fetch(api).then(r=>r.json()).then(j=>{
-          const pages = j?.query?.pages ? Object.values(j.query.pages) : [];
-          const thumbs = pages.map(p=>p.thumbnail?.source).filter(Boolean);
-          for(let i=0;i<3;i++){
-            const url = thumbs[i];
-            if(url && missing.includes(i+1)) setImg(i+1, url);
-          }
-        });
-      }catch(e){}
-    }
+    block.innerHTML = `
+      <div class="hint">Foto: apri la ricerca su Google Images.</div>
+      <button class="btn" id="btnG">🔎 Google Images</button>
+    `;
+    const btn = top.querySelector("#btnG");
+    if(btn) btn.onclick = ()=>window.open(`https://www.google.com/search?tbm=isch&q=${q}`, "_blank");
   }
-   
-   
-   container.appendChild(top);
+
+  container.appendChild(top);
 
   const wrap = document.createElement("div");
   wrap.style.overflow="auto";
@@ -1026,6 +992,7 @@ async function init(){
   DATA = await res.json();
 
   buildPlanIndex();
+  openWeekKey = currentPlan.month + "|" + currentPlan.weekIdx;
   await openDb();
   if(typeof dailyAutoBackup==="function") await dailyAutoBackup();
 await registerSw();
