@@ -1,3 +1,4 @@
+const APP_VERSION = "11.3.2";
 /* GymApp Offline (v4)
    - Plan tab: Month -> Week -> Day (nested like folders)
    - Day view: cards with exercises (sets/reps/rest/target) + open exercise detail
@@ -758,7 +759,7 @@ async function getDayEntryAny(id){
   // 1) try IndexedDB
   if(db){
     try{
-      const x = await getDayEntryAny(id);
+      const x = await getDayEntry(id);
       if(x) return x;
     }catch(e){}
   }
@@ -1146,7 +1147,7 @@ async function resetAll(){
 /* ========= SW registration ========= */
 async function registerSw(){
   if("serviceWorker" in navigator){
-    try{ await navigator.serviceWorker.register("sw.js"); }
+    try{ const reg = await navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }); try{ reg.update(); }catch(e){} }
     catch(e){ console.warn("SW registration failed", e); }
   }
 }

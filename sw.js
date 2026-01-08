@@ -1,9 +1,9 @@
 // Simple offline cache for PWA
-const CACHE = "gymapp-v11.3.1-persist";
+const CACHE = "gymapp-v11.3.2-persist";
 const ASSETS = [
   "./",
   "./index.html",
-  "./app.js",
+  "./app.js?v1132",
   "./data.json",
   "./manifest.json",
   "./icon-192.png",
@@ -27,19 +27,33 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Only handle same-origin GET
+  // Only same-origin GET requests
   if (req.method !== "GET" || url.origin !== location.origin) return;
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      const fetchPromise = fetch(req).then((resp) => {
-        // Update cache
+  const isNav = req.mode === "navigate";
+  const isCore = url.pathname.endsWith("/index.html") || url.pathname.endsWith("/app.js") || url.pathname.endsWith("/data.json");
+
+  // Network-first for navigations and core files (helps iOS update the app)
+  if (isNav || isCore) {
+    event.respondWith(
+      fetch(req).then((resp) => {
         const copy = resp.clone();
         caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
         return resp;
-      }).catch(() => cached || caches.match("./index.html"));
+      }).catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+    );
+    return;
+  }
 
-      return cached || fetchPromise;
+  // Cache-first for everything else
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((resp) => {
+        const copy = resp.clone();
+        caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+        return resp;
+      }).catch(() => caches.match("./index.html"));
     })
   );
 });
