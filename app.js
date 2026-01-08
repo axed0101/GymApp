@@ -369,7 +369,7 @@ async function renderCurrentDay(){
   const dayKey = `${obj.month}||${obj.weekTitle}||${obj.day.title}`;
   const loadOne = async (exName)=>{
     const id = `${dayKey}||${exName}`;
-    const entry = await getDayEntry(id);
+    const entry = await getDayEntryAny(id);
     const kgEl = container.querySelector(`input[data-kg="${cssEscape(exName)}"]`);
     const noteEl = container.querySelector(`textarea[data-note="${cssEscape(exName)}"]`);
     if(entry){
@@ -392,7 +392,7 @@ async function renderCurrentDay(){
       note: noteEl ? noteEl.value.trim() : "",
       ts: Date.now()
     };
-    await upsertDayEntry(payload);
+    await upsertDayEntryAny(payload);
   };
 
   const exNames = obj.day.exercises.map(e=>e.name);
@@ -423,6 +423,46 @@ async function renderCurrentDay(){
   container.querySelectorAll("button[data-open]").forEach(b=>{
     b.onclick = ()=>renderExerciseDetail(b.getAttribute("data-open"));
   });
+}
+
+async function flushVisibleDayFields(){
+  try{
+    if(!currentPlan) return;
+    const obj = getCurrentDayObj();
+    if(!obj) return;
+    const container = $("content");
+    if(!container) return;
+    const dayKey = `${obj.month}||${obj.weekTitle}||${obj.day.title}`;
+    const inputs = container.querySelectorAll("input[data-kg], textarea[data-note]");
+    const byEx = new Map();
+    inputs.forEach(el=>{
+      if(el && el.getAttribute){
+        if(el.matches("input[data-kg]")){
+          const ex = el.getAttribute("data-kg");
+          if(!byEx.has(ex)) byEx.set(ex,{kg:"",note:""});
+          byEx.get(ex).kg = (el.value || "").trim();
+        } else if(el.matches("textarea[data-note]")){
+          const ex2 = el.getAttribute("data-note");
+          if(!byEx.has(ex2)) byEx.set(ex2,{kg:"",note:""});
+          byEx.get(ex2).note = (el.value || "").trim();
+        }
+      }
+    });
+    for(const [exName, val] of byEx.entries()){
+      const id = `${dayKey}||${exName}`;
+      await upsertDayEntryAny({
+        id: id,
+        dayKey: dayKey,
+        month: obj.month,
+        weekTitle: obj.weekTitle,
+        dayTitle: obj.day.title,
+        exercise: exName,
+        kg: val.kg || "",
+        note: val.note || "",
+        ts: Date.now()
+      });
+    }
+  }catch(e){}
 }
 
 function findAdjacentWeek(delta){
@@ -673,6 +713,88 @@ const DB_NAME="workout_offline_db";
 const DB_VER=4;
 let db=null;
 
+/* ========= Day entries storage (IndexedDB + localStorage fallback) ========= */
+function safeUUID(){
+  try{ if(window.crypto && crypto.randomUUID) return safeUUID(); }catch(e){}
+  return "id-"+Date.now()+"-"+Math.random().toString(16).slice(2);
+}
+
+const LS_DAY_KEY = "gymapp_dayEntries_v1";
+
+function lsReadDayMap(){
+  try{
+    const raw = localStorage.getItem(LS_DAY_KEY);
+    if(!raw) return {};
+    const obj = JSON.parse(raw);
+    if(obj && typeof obj === "object") return obj;
+  }catch(e){}
+  return {};
+}
+function lsWriteDayMap(map){
+  try{ localStorage.setItem(LS_DAY_KEY, JSON.stringify(map)); }catch(e){}
+}
+function lsGetDayEntry(id){
+  const map = lsReadDayMap();
+  return map[id] || null;
+}
+function lsUpsertDayEntry(entry){
+  if(!entry || !entry.id) return;
+  const map = lsReadDayMap();
+  map[entry.id] = entry;
+  lsWriteDayMap(map);
+}
+function lsGetAllDayEntries(){
+  const map = lsReadDayMap();
+  const out = [];
+  for(const k in map){ if(Object.prototype.hasOwnProperty.call(map,k)) out.push(map[k]); }
+  return out;
+}
+function lsClearAllDayEntries(){
+  try{ localStorage.removeItem(LS_DAY_KEY); }catch(e){}
+}
+
+/* Unified API: prefer IndexedDB, always mirror in localStorage for iOS reliability */
+async function getDayEntryAny(id){
+  // 1) try IndexedDB
+  if(db){
+    try{
+      const x = await getDayEntryAny(id);
+      if(x) return x;
+    }catch(e){}
+  }
+  // 2) fallback localStorage
+  return lsGetDayEntry(id);
+}
+async function upsertDayEntryAny(entry){
+  // always mirror to localStorage first
+  lsUpsertDayEntry(entry);
+  if(db){
+    try{ await upsertDayEntry(entry); }catch(e){}
+  }
+}
+async function getAllDayEntriesAny(){
+  let out = [];
+  if(db){
+    try{ out = await getAllDayEntries(); }catch(e){ out = []; }
+  }
+  // merge with localStorage (prefer db record if same id)
+  const map = new Map(out.map(x=>[x.id,x]));
+  const ls = lsGetAllDayEntries();
+  for(let i=0;i<ls.length;i++){
+    const e = ls[i];
+    if(e && e.id && !map.has(e.id)) map.set(e.id, e);
+  }
+  return Array.from(map.values());
+}
+async function clearAllDayEntriesAny(){
+  lsClearAllDayEntries();
+  if(db){
+    try{ await clearAll(); }catch(e){} // clearAll clears stores; keep for compat
+  }
+}
+
+
+
 function openDb(){
   return new Promise((resolve,reject)=>{
     const req = indexedDB.open(DB_NAME, DB_VER);
@@ -791,7 +913,7 @@ async function dailyAutoBackup(){
 
   const logs = await getAllLogs();
   const snap = {
-    id: crypto.randomUUID(),
+    id: safeUUID(),
     date: key,
     ts: Date.now(),
     version: 1,
@@ -854,7 +976,7 @@ async function renderLogView(){
 
   card.querySelector("#btnSaveLog").onclick = async ()=>{
     const entry = {
-      id: crypto.randomUUID(),
+      id: safeUUID(),
       date: card.querySelector("#logDate").value,
       exercise: card.querySelector("#logEx").value,
       actual: card.querySelector("#logActual").value.trim(),
@@ -956,28 +1078,38 @@ async function importBackupFromFile(file){
 }
 
 async function importBackup(payload, mode="merge"){
-  const incoming = payload.dayEntries || [];
+  const incoming = payload && payload.dayEntries ? payload.dayEntries : [];
   if(mode==="replace"){
-    await clearAll();
+    await clearAllDayEntriesAny();
   }
-  // Merge by id; if no id, create
-  const existing = await getAllDayEntries();
+  const existing = await getAllDayEntriesAny();
   const map = new Map(existing.map(x=>[x.id,x]));
-  let added=0, skipped=0;
-  for(const item of incoming){
-    const id = item.id || crypto.randomUUID();
-    if(map.has(id)){
-      skipped++;
-      continue;
-    }
-    await addLog({...item, id});
-    added++;
+  let added=0, updated=0;
+  for(let i=0;i<incoming.length;i++){
+    const item = incoming[i];
+    if(!item) continue;
+    const id = item.id ? String(item.id) : ("import-"+Date.now()+"-"+Math.random().toString(16).slice(2));
+    const normalized = {
+      id: id,
+      dayKey: item.dayKey || "",
+      month: item.month || "",
+      weekTitle: item.weekTitle || "",
+      dayTitle: item.dayTitle || "",
+      exercise: item.exercise || "",
+      kg: (item.kg || ""),
+      note: (item.note || ""),
+      ts: item.ts || Date.now()
+    };
+    await upsertDayEntryAny(normalized);
+    if(map.has(id)) updated++; else added++;
+    map.set(id, normalized);
   }
-  return {added, skipped, total: incoming.length};
+  return {added: added, updated: updated, total: incoming.length};
 }
 
+
 async function exportBackup(){
-  const entries = await getAllDayEntries();
+  const entries = await getAllDayEntriesAny();
   const payload = {
     version: 2,
     exportedAt: new Date().toISOString(),
@@ -995,10 +1127,12 @@ async function exportBackup(){
 }
 
 async function resetAll(){
-  if(!confirm("Sei sicuro? Cancello solo i tuoi LOG locali. Il piano resta.")) return;
-  await clearAll();
-  if(currentTab==="log") await renderLogView();
-  alert("Ok: log locali cancellati.");
+  if(!confirm("Sei sicuro? Cancello solo i tuoi dati inseriti (Kg/Note). Il piano resta.")) return;
+  await clearAllDayEntriesAny();
+  // refresh current view
+  if(currentPlan){ await renderCurrentDay(); }
+  else { setActiveTab("plan"); }
+  alert("Ok: dati cancellati.");
 }
 
 /* ========= SW registration ========= */
@@ -1048,6 +1182,9 @@ await registerSw();
   $("btnReset").onclick = ()=>resetAll();
   $("btnBack").onclick = ()=>{ exitMobileDetail(); window.scrollTo({top:0, behavior:"smooth"}); };
   window.addEventListener("resize", ()=>{ if(!isMobile()) exitMobileDetail(); });
+  // ensure last typed values are persisted on iOS when reloading/closing
+  window.addEventListener("pagehide", ()=>{ flushVisibleDayFields(); });
+  document.addEventListener("visibilitychange", ()=>{ if(document.hidden) flushVisibleDayFields(); });
 
   // start
   setActiveTab("plan");
