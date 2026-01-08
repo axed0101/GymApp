@@ -1,4 +1,4 @@
-const APP_VERSION = "11.3.2";
+const APP_VERSION = "11.3.3";
 /* GymApp Offline (v4)
    - Plan tab: Month -> Week -> Day (nested like folders)
    - Day view: cards with exercises (sets/reps/rest/target) + open exercise detail
@@ -134,13 +134,14 @@ function buildPlanIndex(){
   }
   PLAN_INDEX = months;
 
-  // set a safe default currentPlan
+  // set a safe default currentPlan (month only). 
+  // Do NOT auto-select week/day on startup (especially on iOS PWA), so the user lands on the folder list.
+  currentPlan.weekIdx = null;
+  currentPlan.dayIdx = null;
   for(const m of Object.keys(months)){
     const mw = months[m].weeks;
     if(mw.length){
       currentPlan.month = m;
-      currentPlan.weekIdx = 0;
-      currentPlan.dayIdx = 0;
       break;
     }
   }
@@ -1179,8 +1180,11 @@ await registerSw();
       const payload = await importBackupFromFile(file);
       const mode = confirm("OK = UNISCI (merge)\nAnnulla = SOVRASCRIVI (replace)") ? "merge" : "replace";
       const res = await importBackup(payload, mode);
-      alert(`Import completato. Aggiunti: ${res.added} • Saltati: ${res.skipped}`);
-      if(currentTab==="log") await renderLogView();
+      // refresh UI so imported Kg/Note become visible immediately
+      if(currentTab === "plan" && currentPlan){
+        await renderCurrentDay();
+      }
+      alert(`Import completato. Aggiunti: ${res.added} • Aggiornati: ${res.updated} • Totale: ${res.total}`);
     }catch(e){
       alert(e.message || String(e));
     } finally {

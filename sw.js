@@ -1,5 +1,5 @@
 // Simple offline cache for PWA
-const CACHE = "gymapp-v11.3.2-persist";
+const CACHE = "gymapp-v11.3.4-noautoselect";
 const ASSETS = [
   "./",
   "./index.html",
