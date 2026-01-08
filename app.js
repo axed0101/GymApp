@@ -1296,7 +1296,7 @@ async function exportBackup(){
   URL.revokeObjectURL(url);
 }
 
-async async function resetAll(){
+async function resetAll(){
   const ok = confirm("Vuoi davvero cancellare TUTTI i dati locali (Kg/Note e backup interni)? Il piano resta.");
   if(!ok) return;
   const code = prompt("Per confermare inserisci il codice 0000", "");
