@@ -155,6 +155,7 @@ function setActiveTab(tab){
   $("q").value = "";
   exitMobileDetail();
   renderList();
+  const sm = $("sideMenu"); if(sm) sm.style.display = (tab==="plan") ? "flex" : "none";
   syncNav();
   if(tab==="ex") renderExerciseListLanding();
   if(tab==="plan"){

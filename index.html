@@ -99,6 +99,12 @@
     .field input,.field textarea{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#101114;color:var(--text)}
     .field textarea{min-height:86px}
 
+  
+    .side-menu{padding:12px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+    .side-menu-title{font-size:12px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
+    .side-menu .btn{width:100%;justify-content:flex-start}
+    .side-menu-hint{font-size:12px;color:var(--muted);line-height:1.35}
+
   </style>
 </head>
 <body>
@@ -124,6 +130,15 @@
 </div>
 
     <div class="list" id="list"></div>
+
+    <div class="side-menu" id="sideMenu">
+      <div class="side-menu-title">Dati</div>
+      <button class="btn" id="btnImport">⬆️ Importa backup</button>
+      <button class="btn" id="btnExport">⬇️ Esporta backup</button>
+      <button class="btn danger" id="btnReset">🧨 Reset dati locali</button>
+      <div class="side-menu-hint">Suggerimento: esporta ogni tanto per non perdere i Kg/Note.</div>
+    </div>
+
   </aside>
 
   <main class="main">
@@ -133,10 +148,7 @@
       <div class="muted" id="subtitle"></div>
       <div style="flex:1"></div>
       <button class="btn" id="btnToggleView">🧭 Vista: Leggibile</button>
-      <button class="btn" id="btnImport">⬆️ Importa backup</button>
-      <button class="btn" id="btnExport">⬇️ Esporta backup</button>
-      <button class="btn danger" id="btnReset">🧨 Reset dati locali</button>
-    </div>
+</div>
     <div class="content" id="content">
       <div class="hint">Sto caricando i dati…</div>
     </div>
@@ -144,7 +156,7 @@
 </div>
 
 <input id="fileImport" type="file" accept="application/json" style="display:none" />
-<script src="app.js?v1134"></script>
+<script src="app.js?v1135"></script>
 
 <div id="bottomNav" class="bottomNav">
   <button class="navBtn active" id="nav-plan" aria-label="Piano"><span class="ico">📅</span><span>Piano</span></button>
