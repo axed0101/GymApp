@@ -793,6 +793,14 @@ async function clearAllDayEntriesAny(){
   }
 }
 
+// Back-compat aliases (older builds called these without the *Any suffix)
+async function getDayEntry(id){
+  return getDayEntryAny(id);
+}
+async function upsertDayEntry(obj){
+  return upsertDayEntryAny(obj);
+}
+
 
 
 function openDb(){
