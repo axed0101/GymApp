@@ -1,4 +1,4 @@
-const APP_VERSION = "11.3.3";
+const APP_VERSION = "11.3.7";
 /* GymApp Offline (v4)
    - Plan tab: Month -> Week -> Day (nested like folders)
    - Day view: cards with exercises (sets/reps/rest/target) + open exercise detail
@@ -176,6 +176,54 @@ function syncNav(){
   if(el) el.classList.add("active");
 }
 /* ========= Sidebar list ========= */
+function parseWeekTitle(raw){
+  const s = String(raw||"").trim();
+  // Expected: "Week 1 • 07 Jan – 13 Jan 2026 • Phase: BASE"
+  let weekNum = null;
+  let phase = "";
+  let dates = "";
+  const mWeek = s.match(/\bWeek\s+(\d+)\b/i);
+  if(mWeek) weekNum = mWeek[1];
+  const mPhase = s.match(/\bPhase\s*:\s*([^•|]+)\b/i);
+  if(mPhase) phase = String(mPhase[1]||"").trim();
+  if(s.indexOf("•") !== -1){
+    const parts = s.split("•").map(p=>p.trim()).filter(Boolean);
+    // parts: ["Week 1", "07 Jan – 13 Jan 2026", "Phase: BASE"]
+    if(parts.length>=2) dates = parts[1];
+    if(!phase && parts.length>=3){
+      const p = parts[2];
+      const mm = p.match(/\bPhase\s*:\s*(.+)$/i);
+      if(mm) phase = String(mm[1]||"").trim();
+    }
+  }else{
+    // fallback: try to capture a date range in the string
+    const mDates = s.match(/\b\d{1,2}\s+[A-Za-z]{3}\b[\s\S]*?\b\d{4}\b/);
+    if(mDates) dates = mDates[0];
+  }
+  const main = (weekNum ? ("Week " + weekNum) : "Week") + (phase ? (" - Phase: " + phase.toUpperCase()) : "");
+  return { main, dates };
+}
+
+function parseKgNumber(v){
+  if(v===null || v===undefined) return null;
+  const s = String(v).trim().replace(",",".");
+  if(!s) return null;
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+
+function formatDelta(curr, prev){
+  if(prev===null || prev===undefined || curr===null || curr===undefined) return "";
+  const d = curr - prev;
+  if(!isFinite(d)) return "";
+  const abs = Math.abs(d);
+  const sign = d>0 ? "+" : (d<0 ? "−" : "±");
+  // keep up to 1 decimal if needed
+  const shown = (abs % 1 === 0) ? String(abs.toFixed(0)) : String(abs.toFixed(1));
+  if(d===0) return "0 kg vs prev week";
+  return sign + shown + " kg vs prev week";
+}
+
 function renderList(){
   const list = $("list");
   list.innerHTML = "";
@@ -204,7 +252,15 @@ function renderList(){
 
         const wkDiv = document.createElement("div");
         wkDiv.className = "item" + (isActiveWeek ? " active" : "");
-        wkDiv.innerHTML = `<div>${isOpen ? "📂" : "📁"} ${escapeHtml(wk.title)}</div><small>${wk.days.length} day</small>`;
+        const wkInfo = parseWeekTitle(wk.title);
+        wkDiv.innerHTML = `
+          <div class="wkGrid">
+            <div class="wkIcon">${isOpen ? "🗂️" : "🗃️"}</div>
+            <div class="wkMain">${escapeHtml(wkInfo.main)}</div>
+            ${wkInfo.dates ? `<div class="wkDates">${escapeHtml(wkInfo.dates)}</div>` : ``}
+          </div>
+          <small>${wk.days.length} day</small>
+        `;
         wkDiv.onclick = ()=>{
           // Accordion: open/close the week without auto-selecting any day
           openWeekKey = (openWeekKey === weekKey) ? null : weekKey;
@@ -352,6 +408,7 @@ async function renderCurrentDay(){
       <div class="field">
         <label>Kg usati oggi</label>
         <input inputmode="decimal" placeholder="es. 80" data-kg="${escapeHtml(ex.name)}" />
+        <div class="delta" data-delta="${escapeHtml(ex.name)}"></div>
       </div>
       <div class="field">
         <label>Note (esecuzione / RIR / sensazioni)</label>
@@ -375,9 +432,29 @@ async function renderCurrentDay(){
     const entry = await getDayEntryAny(id);
     const kgEl = container.querySelector(`input[data-kg="${cssEscape(exName)}"]`);
     const noteEl = container.querySelector(`textarea[data-note="${cssEscape(exName)}"]`);
+    const deltaEl = container.querySelector(`div[data-delta="${cssEscape(exName)}"]`);
+    let prevKgNum = null;
+    if(obj.weekIdx>0){
+      const prevWeek = PLAN_INDEX[obj.month] && PLAN_INDEX[obj.month].weeks ? PLAN_INDEX[obj.month].weeks[obj.weekIdx-1] : null;
+      if(prevWeek && prevWeek.days && prevWeek.days[obj.dayIdx]){
+        const prevDayKey = `${obj.month}||${prevWeek.title}||${prevWeek.days[obj.dayIdx].title}`;
+        const prevId = `${prevDayKey}||${exName}`;
+        const prevEntry = await getDayEntryAny(prevId);
+        if(prevEntry && prevEntry.kg!==undefined){ prevKgNum = parseKgNumber(prevEntry.kg); }
+      }
+    }
+    if(deltaEl){ deltaEl.dataset.prev = (prevKgNum===null? "" : String(prevKgNum)); }
+
     if(entry){
       if(kgEl) kgEl.value = entry.kg || "";
       if(noteEl) noteEl.value = entry.note || "";
+    }
+    if(deltaEl){
+      const curr = kgEl ? parseKgNumber(kgEl.value) : null;
+      const prev = (deltaEl.dataset.prev ? parseKgNumber(deltaEl.dataset.prev) : null);
+      const txt = formatDelta(curr, prev);
+      deltaEl.textContent = txt;
+      deltaEl.style.display = txt ? "block" : "none";
     }
   };
   const saveOne = async (exName)=>{
@@ -410,7 +487,17 @@ async function renderCurrentDay(){
 
   container.querySelectorAll("input[data-kg]").forEach(inp=>{
     const exName = inp.getAttribute("data-kg");
-    inp.addEventListener("input", ()=>debouncedSave(exName));
+    inp.addEventListener("input", ()=>{
+      debouncedSave(exName);
+      const deltaEl = container.querySelector(`div[data-delta="${cssEscape(exName)}"]`);
+      if(deltaEl){
+        const curr = parseKgNumber(inp.value);
+        const prev = (deltaEl.dataset.prev ? parseKgNumber(deltaEl.dataset.prev) : null);
+        const t = formatDelta(curr, prev);
+        deltaEl.textContent = t;
+        deltaEl.style.display = t ? "block" : "none";
+      }
+    });
     inp.addEventListener("blur", ()=>saveOne(exName));
   });
   container.querySelectorAll("textarea[data-note]").forEach(tx=>{
@@ -1139,6 +1226,8 @@ async function exportBackup(){
 
 async function resetAll(){
   if(!confirm("Sei sicuro? Cancello solo i tuoi dati inseriti (Kg/Note). Il piano resta.")) return;
+  const code = prompt("Per confermare davvero, digita 0000 (altrimenti annullo).");
+  if(code !== "0000") { alert("Reset annullato."); return; }
   await clearAllDayEntriesAny();
   // refresh current view
   if(currentPlan){ await renderCurrentDay(); }
