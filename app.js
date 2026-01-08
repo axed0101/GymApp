@@ -1106,7 +1106,6 @@ async function dailyAutoBackup(){
   localStorage.setItem("lastAutoBackupTs", String(Date.now()));
   try{ updateAutoBackupUi(); }catch(e){}
 }
-}
 
 async function renderLogView(){
   currentSheet=null;
