@@ -1,5 +1,5 @@
 // Simple offline cache for PWA
-const CACHE = "gymapp-v11.3.7-premium-delta";
+const CACHE = "gymapp-v11.3.8-premium";
 const ASSETS = [
   "./",
   "./index.html",

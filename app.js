@@ -1,4 +1,4 @@
-const APP_VERSION = "11.3.7";
+const APP_VERSION = "11.3.8";
 /* GymApp Offline (v4)
    - Plan tab: Month -> Week -> Day (nested like folders)
    - Day view: cards with exercises (sets/reps/rest/target) + open exercise detail
@@ -213,7 +213,8 @@ function parseKgNumber(v){
 }
 
 function formatDelta(curr, prev){
-  if(prev===null || prev===undefined || curr===null || curr===undefined) return "";
+  if(curr===null || curr===undefined) return "";
+  if(prev===null || prev===undefined) return "Prev week: —";
   const d = curr - prev;
   if(!isFinite(d)) return "";
   const abs = Math.abs(d);
@@ -223,6 +224,7 @@ function formatDelta(curr, prev){
   if(d===0) return "0 kg vs prev week";
   return sign + shown + " kg vs prev week";
 }
+
 
 function renderList(){
   const list = $("list");
@@ -426,7 +428,7 @@ async function renderCurrentDay(){
 
   try{
   // load + autosave per-exercise fields (kg + note) for this day workout
-  const dayKey = `${obj.month}||${obj.weekTitle}||${obj.day.title}`;
+  const dayKey = `${obj.month}||${obj.week.title}||${obj.day.title}`;
   const loadOne = async (exName)=>{
     const id = `${dayKey}||${exName}`;
     const entry = await getDayEntryAny(id);
@@ -522,7 +524,7 @@ async function flushVisibleDayFields(){
     if(!obj) return;
     const container = $("content");
     if(!container) return;
-    const dayKey = `${obj.month}||${obj.weekTitle}||${obj.day.title}`;
+    const dayKey = `${obj.month}||${obj.week.title}||${obj.day.title}`;
     const inputs = container.querySelectorAll("input[data-kg], textarea[data-note]");
     const byEx = new Map();
     inputs.forEach(el=>{
@@ -881,6 +883,23 @@ async function clearAllDayEntriesAny(){
   if(db){
     try{ await clearAll(); }catch(e){} // clearAll clears stores; keep for compat
   }
+
+async function clearAllBackupsAny(){
+  // Clears internal backup snapshots (auto backups)
+  try{ localStorage.removeItem("lastAutoBackupDate"); }catch(e){}
+  try{ localStorage.removeItem("lastAutoBackupTs"); }catch(e){}
+  try{ lsClearAllBackups && lsClearAllBackups(); }catch(e){}
+  if(db){
+    try{
+      await new Promise((resolve,reject)=>{
+        const tx = db.transaction(["backups"],"readwrite");
+        const req = tx.objectStore("backups").clear();
+        req.onsuccess=()=>resolve();
+        req.onerror=()=>reject(req.error);
+      });
+    }catch(e){}
+  }
+}
 }
 
 // Back-compat aliases (older builds called these without the *Any suffix)
@@ -958,12 +977,30 @@ function getAllDayEntries(){
 
 
 function clearAll(){
+  // Clears ALL local DB stores (Kg/Note entries + backups + legacy logs)
   return new Promise((resolve,reject)=>{
-    const tx = db.transaction(["logs"],"readwrite");
-    const req = tx.objectStore("logs").clear();
-    req.onsuccess=()=>resolve();
-    req.onerror=()=>reject(req.error);
+    if(!db){ resolve(); return; }
+    const tx = db.transaction(["dayEntries","backups","logs"], "readwrite");
+    let pending = 3;
+    const done = ()=>{ pending--; if(pending<=0) resolve(); };
+    const fail = (err)=>{ try{ reject(err); }catch(e){} };
+    try{
+      const r1 = tx.objectStore("dayEntries").clear();
+      r1.onsuccess = done;
+      r1.onerror = ()=>fail(r1.error || tx.error);
+    }catch(e){ done(); }
+    try{
+      const r2 = tx.objectStore("backups").clear();
+      r2.onsuccess = done;
+      r2.onerror = ()=>fail(r2.error || tx.error);
+    }catch(e){ done(); }
+    try{
+      const r3 = tx.objectStore("logs").clear();
+      r3.onsuccess = done;
+      r3.onerror = ()=>fail(r3.error || tx.error);
+    }catch(e){ done(); }
   });
+}
 
 async function addBackup(snapshot){
   return new Promise((resolve,reject)=>{
@@ -1002,7 +1039,41 @@ async function getDayEntry(id){
   });
 }
 
+
+function isAutoBackupEnabled(){
+  const v = localStorage.getItem("autoBackupEnabled");
+  return v !== "0";
+}
+function setAutoBackupEnabled(enabled){
+  localStorage.setItem("autoBackupEnabled", enabled ? "1" : "0");
+}
+function formatTs(ts){
+  try{
+    const d = new Date(Number(ts));
+    if(!isFinite(d.getTime())) return "";
+    const dd = String(d.getDate()).padStart(2,"0");
+    const mm = String(d.getMonth()+1).padStart(2,"0");
+    const yy = d.getFullYear();
+    const hh = String(d.getHours()).padStart(2,"0");
+    const mi = String(d.getMinutes()).padStart(2,"0");
+    return dd + "/" + mm + "/" + yy + " " + hh + ":" + mi;
+  }catch(e){ return ""; }
+}
+function updateAutoBackupUi(){
+  const elStatus = document.getElementById("autoBackupStatus");
+  const elLast = document.getElementById("autoBackupLast");
+  const btn = document.getElementById("btnAutoBackupToggle");
+  if(!elStatus || !elLast || !btn) return;
+  const enabled = isAutoBackupEnabled();
+  elStatus.textContent = enabled ? "ATTIVO" : "OFF";
+  elStatus.className = enabled ? "badge ok" : "badge";
+  btn.textContent = enabled ? "Disattiva" : "Attiva";
+  const ts = localStorage.getItem("lastAutoBackupTs");
+  elLast.textContent = ts ? formatTs(ts) : "—";
+}
+
 async function dailyAutoBackup(){
+  if(!isAutoBackupEnabled()) return;
   // iOS Safari blocks automatic file downloads, so we save a daily snapshot INSIDE the app (IndexedDB).
   const today = new Date();
   const key = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
@@ -1032,6 +1103,8 @@ async function dailyAutoBackup(){
   }
 
   localStorage.setItem("lastAutoBackupDate", key);
+  localStorage.setItem("lastAutoBackupTs", String(Date.now()));
+  try{ updateAutoBackupUi(); }catch(e){}
 }
 }
 
@@ -1224,15 +1297,20 @@ async function exportBackup(){
   URL.revokeObjectURL(url);
 }
 
-async function resetAll(){
-  if(!confirm("Sei sicuro? Cancello solo i tuoi dati inseriti (Kg/Note). Il piano resta.")) return;
-  const code = prompt("Per confermare davvero, digita 0000 (altrimenti annullo).");
-  if(code !== "0000") { alert("Reset annullato."); return; }
+async async function resetAll(){
+  const ok = confirm("Vuoi davvero cancellare TUTTI i dati locali (Kg/Note e backup interni)? Il piano resta.");
+  if(!ok) return;
+  const code = prompt("Per confermare inserisci il codice 0000", "");
+  if(code !== "0000"){ showModal("Codice errato. Reset annullato.", "Reset"); return; }
   await clearAllDayEntriesAny();
-  // refresh current view
-  if(currentPlan){ await renderCurrentDay(); }
-  else { setActiveTab("plan"); }
-  alert("Ok: dati cancellati.");
+  await clearAllBackupsAny();
+  try{ updateAutoBackupUi(); }catch(e){}
+  // refresh UI
+  if(currentTab==="plan"){
+    renderList();
+    if(currentPlan){ await renderCurrentDay(); }
+  }
+  showModal("Ok: dati locali cancellati.", "Reset completato");
 }
 
 /* ========= SW registration ========= */
@@ -1282,6 +1360,12 @@ await registerSw();
     }
   };
   $("btnExport").onclick = ()=>exportBackup();
+  const ab = document.getElementById("btnAutoBackupToggle");
+  if(ab){
+    ab.onclick = ()=>{ setAutoBackupEnabled(!isAutoBackupEnabled()); updateAutoBackupUi(); };
+  }
+  try{ updateAutoBackupUi(); }catch(e){}
+
   $("btnReset").onclick = ()=>resetAll();
   $("btnBack").onclick = ()=>{ exitMobileDetail(); window.scrollTo({top:0, behavior:"smooth"}); };
   window.addEventListener("resize", ()=>{ if(!isMobile()) exitMobileDetail(); });
