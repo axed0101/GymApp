@@ -12,7 +12,7 @@ let currentTab = "plan"; // plan | ex | log
 let currentSheet = null;  // used for exercise detail
 let openWeekKey = null;
 
-let currentPlan = { month: "January", weekIdx: 0, dayIdx: 0 };
+let currentPlan = { month: "January", weekIdx: null, dayIdx: null };
 
 const $ = (id)=>document.getElementById(id);
 
@@ -147,29 +147,31 @@ function buildPlanIndex(){
 
 function setActiveTab(tab){
   currentTab = tab;
-  ["tab-plan","tab-ex","tab-log"].forEach(t=>$(t).classList.remove("active"));
-  $(`tab-${tab}`).classList.add("active");
+  ["tab-plan","tab-ex"].forEach(t=>{ const el=$(t); if(el) el.classList.remove("active"); });
+  const active = $(`tab-${tab}`);
+  if(active) active.classList.add("active");
   $("q").value = "";
   exitMobileDetail();
   renderList();
   syncNav();
-  if(tab==="log") renderLogView();
   if(tab==="ex") renderExerciseListLanding();
-  if(tab==="plan") renderCurrentDay();
+  if(tab==="plan"){
+    // On app start we don't auto-open a day; show landing until user selects one.
+    if(typeof currentPlan.weekIdx==="number" && typeof currentPlan.dayIdx==="number") renderCurrentDay();
+    else renderPlanLanding();
+  }
 }
-
 function syncNav(){
-  const ids = ["nav-plan","nav-ex","nav-log"];
+  const ids = ["nav-plan","nav-ex"];
   for(const id of ids){
     const el = document.getElementById(id);
     if(!el) continue;
     el.classList.remove("active");
   }
-  const activeId = currentTab==="plan" ? "nav-plan" : (currentTab==="ex" ? "nav-ex" : "nav-log");
+  const activeId = currentTab==="plan" ? "nav-plan" : "nav-ex";
   const el = document.getElementById(activeId);
   if(el) el.classList.add("active");
 }
-
 /* ========= Sidebar list ========= */
 function renderList(){
   const list = $("list");
@@ -201,11 +203,8 @@ function renderList(){
         wkDiv.className = "item" + (isActiveWeek ? " active" : "");
         wkDiv.innerHTML = `<div>${isOpen ? "📂" : "📁"} ${escapeHtml(wk.title)}</div><small>${wk.days.length} day</small>`;
         wkDiv.onclick = ()=>{
-          // toggle accordion
+          // Accordion: open/close the week without auto-selecting any day
           openWeekKey = (openWeekKey === weekKey) ? null : weekKey;
-          currentPlan.month = mName;
-          currentPlan.weekIdx = wi;
-          if(typeof currentPlan.dayIdx!=="number") currentPlan.dayIdx = 0;
           renderList();
         };
         list.appendChild(wkDiv);
@@ -267,6 +266,22 @@ function renderList(){
   }
 }
 
+function renderPlanLanding(){
+  currentSheet = null;
+  $("title").textContent = "Piano";
+  $("subtitle").textContent = "Seleziona una settimana e poi un day workout";
+  const container = $("content");
+  container.innerHTML = `
+    <div class="card">
+      <h3>👈 Scegli dalla lista</h3>
+      <div class="hint" style="margin-top:10px">
+        Tocca una <b>settimana</b> per aprire/chiudere l’elenco, poi scegli il <b>day workout</b>.
+        <br/>Su iPhone così non ti si apre niente “a tradimento”.
+      </div>
+    </div>
+  `;
+}
+
 /* ========= Plan views ========= */
 function getCurrentDayObj(){
   const m = PLAN_INDEX[currentPlan.month];
@@ -324,13 +339,11 @@ async function renderCurrentDay(){
     const c = document.createElement("div");
     c.className="card";
     const hasSheet = Object.prototype.hasOwnProperty.call(DATA, ex.name);
-    const target = ex.target && ex.target.startsWith("=") ? "calcolato in Excel" : (ex.target || "");
     c.innerHTML = `
       <h3>${idx+1}. ${escapeHtml(ex.name)}</h3>
       <div class="row" style="margin-top:8px">
         ${ex.sets ? `<span class="pill" style="cursor:default" data-ico="🔁">${escapeHtml(ex.sets)}</span>` : ""}
         ${ex.rest ? `<span class="pill" style="cursor:default" data-ico="⏱️">${escapeHtml(ex.rest)}</span>` : ""}
-        ${target ? `<span class="pill" style="cursor:default" data-ico="🎯">${escapeHtml(target)}</span>` : ""}
       </div>
       ${ex.notes ? `<div class="hint" style="margin-top:10px">${escapeHtml(ex.notes)}</div>` : ``}
       <div class="field">
@@ -343,8 +356,7 @@ async function renderCurrentDay(){
       </div>
       <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
         ${hasSheet ? `<button class="btn primary" data-open="${escapeHtml(ex.name)}">📄 Dettagli</button>` : `<span class="hint">Nessuna scheda trovata</span>`}
-        <button class="btn" data-addlog="${escapeHtml(ex.name)}">📝 Log</button>
-      </div>
+</div>
     `;
     list.appendChild(c);
   });
@@ -410,17 +422,6 @@ async function renderCurrentDay(){
   // wire buttons
   container.querySelectorAll("button[data-open]").forEach(b=>{
     b.onclick = ()=>renderExerciseDetail(b.getAttribute("data-open"));
-  });
-  container.querySelectorAll("button[data-addlog]").forEach(b=>{
-    const name = b.getAttribute("data-addlog");
-    b.onclick = async ()=>{
-      setActiveTab("log");
-      // preselect exercise inside log view
-      setTimeout(()=>{
-        const sel = document.getElementById("logEx");
-        if(sel){ sel.value = name; }
-      }, 50);
-    };
   });
 }
 
@@ -614,6 +615,8 @@ function renderRawSheet(sheetName, fromExercise=false){
 
   const tbody = document.createElement("tbody");
   for(let r=0;r<grid.length;r++){
+    const rowNum = min_row + r;
+    if(fromExercise && ((rowNum>=6 && rowNum<=17) || (rowNum>=21 && rowNum<=28))) continue;
     const tr = document.createElement("tr");
     const th = document.createElement("th");
     th.textContent = String(min_row + r);
@@ -713,6 +716,26 @@ function getAllLogs(){
     req.onerror=()=>reject(req.error);
   });
 }
+
+function getAllDayEntries(){
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(["dayEntries"],"readonly");
+    const store = tx.objectStore("dayEntries");
+    const out = [];
+    const req = store.openCursor();
+    req.onsuccess = ()=>{
+      const cur = req.result;
+      if(cur){
+        out.push(cur.value);
+        cur.continue();
+      } else {
+        resolve(out);
+      }
+    };
+    req.onerror = ()=>reject(req.error);
+  });
+}
+
 
 function clearAll(){
   return new Promise((resolve,reject)=>{
@@ -928,17 +951,17 @@ async function importBackupFromFile(file){
   const text = await file.text();
   let payload = null;
   try{ payload = JSON.parse(text); }catch(e){ throw new Error("Il file non è un JSON valido."); }
-  if(!payload || !Array.isArray(payload.logs)) throw new Error("Backup non valido: manca logs[].");
+  if(!payload || !Array.isArray(payload.dayEntries)) throw new Error("Backup non valido: manca dayEntries[].");
   return payload;
 }
 
 async function importBackup(payload, mode="merge"){
-  const incoming = payload.logs || [];
+  const incoming = payload.dayEntries || [];
   if(mode==="replace"){
     await clearAll();
   }
   // Merge by id; if no id, create
-  const existing = await getAllLogs();
+  const existing = await getAllDayEntries();
   const map = new Map(existing.map(x=>[x.id,x]));
   let added=0, skipped=0;
   for(const item of incoming){
@@ -954,17 +977,17 @@ async function importBackup(payload, mode="merge"){
 }
 
 async function exportBackup(){
-  const logs = await getAllLogs();
+  const entries = await getAllDayEntries();
   const payload = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
-    logs
+    dayEntries: entries
   };
   const blob = new Blob([JSON.stringify(payload,null,2)], {type:"application/json"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href=url;
-  a.download="gymapp_offline_backup.json";
+  a.download="gymapp_backup_dayEntries.json";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -992,7 +1015,7 @@ async function init(){
   DATA = await res.json();
 
   buildPlanIndex();
-  openWeekKey = currentPlan.month + "|" + currentPlan.weekIdx;
+  openWeekKey = null;
   await openDb();
   if(typeof dailyAutoBackup==="function") await dailyAutoBackup();
 await registerSw();
@@ -1001,11 +1024,9 @@ await registerSw();
   $("q").addEventListener("input", ()=>renderList());
   $("tab-plan").onclick = ()=>setActiveTab("plan");
   $("tab-ex").onclick = ()=>setActiveTab("ex");
-  $("tab-log").onclick = ()=>setActiveTab("log");
-  const np=document.getElementById("nav-plan"); if(np) np.onclick=()=>setActiveTab("plan");
+    const np=document.getElementById("nav-plan"); if(np) np.onclick=()=>setActiveTab("plan");
   const ne=document.getElementById("nav-ex"); if(ne) ne.onclick=()=>setActiveTab("ex");
-  const nl=document.getElementById("nav-log"); if(nl) nl.onclick=()=>setActiveTab("log");
-
+  
   $("btnToggleView").style.display="none"; // v4: plan is folder view; hide old toggle
   $("btnImport").onclick = ()=>document.getElementById("fileImport").click();
   document.getElementById("fileImport").onchange = async (ev)=>{
